@@ -4,15 +4,6 @@
 /// compute the index that completes a set for two cards, and test whether a
 /// slice of indices contains any set.
 
-pub fn all_cards() -> Vec<usize> {
-    // returns a vec with all 81 card indexes (0..80)
-    let mut cards = Vec::new();
-    for i in 0..81 {
-        cards.push(i as usize);
-    }
-    return cards;
-}
-
 pub fn index_to_base3(i: usize) -> [usize; 4] {
     // converts a card index (0..80) to its base-3 representation
     // representing the 4 attributes of the card
@@ -62,3 +53,5 @@ pub fn next_to_set(i0: usize, i1: usize) -> usize {
     }
     return index;
 }
+
+

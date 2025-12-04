@@ -11,7 +11,9 @@
 /// no-set-n+1 from a given no-set-n list.
 
 use crate::is_set::*;
+use std::cmp::min;
 
+#[derive(Clone)]
 pub struct NList {
     pub n: u8,
     pub max_card: usize,
@@ -19,7 +21,9 @@ pub struct NList {
     pub remaining_cards_list: Vec<usize>,
 }
 
+
 impl NList {
+    /// return a string representation of the no-set-list
     pub fn to_string(&self) -> String {
         // check there are at least 3 cards in no-set-list
         let nsl_len = self.no_set_list.len();
@@ -52,6 +56,58 @@ impl NList {
         // consolidate the whole string
         return format!("{:>2}-list: max={:>2} : {}+{}", self.n, self.max_card, nsl_msg, rcl_msg);
     }
+
+    /// Return a list of n+1-no_set_lists built from the current n-no_set_list
+    /// Implementation note:
+    ///     - for all card C in the remaining list:
+    ///         - create a 'n+1-primary list' with the existing 'primary list' 
+    ///           extended with C
+    ///      - create a 'cadidate n+1-remaining list' for the 'primary list + C':
+    ///          - start from the 'remaining card' list
+    ///          - discard any card in this remaining list of a value =< C : this becomes the 'candidate n+1-remaining list'
+    ///          - for any card P in the 'primary list':
+    ///              - compute the thid card D which form a valid set with C and P
+    ///              - check if D is in the 'candidate n+1-remaining list': if yes, remove it from the list
+    ///          - if there are not enough cards left in the 'candidate n+1-remaining list' to complement the 'primary list' to 12 cards, it means that the card C is a dead-end: drop it and go to the next card C
+    ///          - else you have created a valid n+1-list: store it for later processing, and move the next card C
+    ///   - return the list of n+1-no_set_lists created
+    pub fn build_n_plus_1_no_set_lists(&self) -> Vec<NList> {
+        // we will store the resulting n+1-no_set_lists here
+        let mut n_plus_1_lists = Vec::new();
+        // for all card C in the remaining list
+        for c in self.remaining_cards_list.iter() {
+            // create the n+1-primary list
+            let mut n_plus_1_primary_list = self.no_set_list.clone();
+            n_plus_1_primary_list.push(*c);
+            // create the candidate n+1-remaining list (all cards above c)
+            let mut n_plus_1_remaining_list: Vec<usize> = self
+                .remaining_cards_list
+                .iter()
+                .filter(|&&x| x > *c)
+                .cloned()
+                .collect();
+            // for all card P in the primary list, remove from the candidate 
+            // remaining list any D card that would form a valid set with C and
+            // P
+            for p in self.no_set_list.iter() {
+                let d = next_to_set(*p, *c);
+                n_plus_1_remaining_list.retain(|&x| x != d);
+            }
+            // check if we have enough cards left in the candidate remaining list
+            let cards_needed = 12 - min(self.n as usize + 1, 12);
+            if n_plus_1_remaining_list.len() >= cards_needed {
+                // we have created a valid n+1-no_set_list: store it
+                let n_plus_1_nlist = NList {
+                    n: self.n + 1,
+                    max_card: *c,
+                    no_set_list: n_plus_1_primary_list,
+                    remaining_cards_list: n_plus_1_remaining_list,
+                };
+                n_plus_1_lists.push(n_plus_1_nlist);
+            }
+        }
+        return n_plus_1_lists;
+    }
 }
 
 
@@ -78,10 +134,11 @@ pub fn create_all_03_no_set_lists() -> Vec<NList> {
         for j in (i + 1)..71 {
             for k in (j + 1)..72 {
                 // (i,j,k) is a candidate for a no-set-03 combination
+                let table = vec![i, j, k];
                 if !is_set(i, j, k) {
                     // (i,j,k) is a no-set-03 combination
-                    // build a 'remainign list' with all the possible values 
-                    let mut remaining_cards = vec![k+1..81];
+                    // build a 'remaining list' with all the possible values strictly greater than k
+                    let mut remaining_cards: Vec<usize> = (k + 1..81).collect();
                     // remove from this list all cards that would create a set
                     // with any pair of cards in the current table
                     let c1 = next_to_set(i, j);
