@@ -12,15 +12,15 @@
 
 use crate::is_set::*;
 use std::cmp::min;
+use serde::{Serialize, Deserialize};
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct NList {
     pub n: u8,
     pub max_card: usize,
     pub no_set_list: Vec<usize>,
     pub remaining_cards_list: Vec<usize>,
 }
-
 
 impl NList {
     /// return a string representation of the no-set-list
@@ -34,8 +34,8 @@ impl NList {
         let mut nsl_msg = "(".to_string();
         for i in &self.no_set_list {
             nsl_msg.push_str(&format!("{:>2}", i));
-            if i + 1 < nsl_len {
-                nsl_msg.push_str(",");
+            if *i < nsl_len {
+                nsl_msg.push_str(".");
             }
         }
         nsl_msg.push_str(")");
@@ -48,7 +48,7 @@ impl NList {
             for i in 0..rcl_len  {
                 rcl_msg.push_str(&format!("{:>2}", self.remaining_cards_list[i]));
                 if i + 1 < rcl_len {
-                    rcl_msg.push_str(",");
+                    rcl_msg.push_str(".");
                 }
             }
         }
@@ -110,6 +110,34 @@ impl NList {
     }
 }
 
+/// Saves a list of n-lists to a binary file using bincode serialization
+/// 
+/// # Arguments
+/// * `list_of_nlists` - The list of NList structures to save
+/// * `filename` - Path to the output file
+/// 
+/// # Returns
+/// * `Ok(())` on success
+/// * `Err` containing the error if serialization or file write fails
+pub fn save_to_file(list_of_nlists: &Vec<NList>, filename: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let encoded = bincode::serialize(list_of_nlists)?;
+    std::fs::write(filename, encoded)?;
+    Ok(())
+}
+
+/// Reads a list of n-lists from a binary file using bincode deserialization
+/// 
+/// # Arguments
+/// * `filename` - Path to the input file
+/// 
+/// # Returns
+/// * `Ok(Vec<NList>)` containing the deserialized list on success
+/// * `Err` containing the error if file read or deserialization fails
+pub fn read_from_file(filename: &str) -> Result<Vec<NList>, Box<dyn std::error::Error>> {
+    let bytes = std::fs::read(filename)?;
+    let decoded = bincode::deserialize(&bytes)?;
+    Ok(decoded)
+}
 
 /// Build the list of all possible no-set-03 combinations, i.e. combinations of 
 /// 3 cards within which no valid set can be found, with their corresponding 
@@ -125,7 +153,6 @@ impl NList {
 ///     - if we want to focus on the no-set-table with 18 cards, we may stop at
 ///       max card index 65 (i.e. one will need to complement the 3 cards with
 ///       at least 15 more cards to get to 18).
-
 pub fn create_all_03_no_set_lists() -> Vec<NList> {
     // we will store the results in this vector
     let mut no_set_03 = Vec::new();
@@ -158,4 +185,48 @@ pub fn create_all_03_no_set_lists() -> Vec<NList> {
         }
     }
     return no_set_03;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bincode_roundtrip() {
+        // Create test data
+        let test_lists = vec![
+            NList {
+                n: 3,
+                max_card: 10,
+                no_set_list: vec![0, 5, 10],
+                remaining_cards_list: vec![11, 12, 13, 14],
+            },
+            NList {
+                n: 4,
+                max_card: 15,
+                no_set_list: vec![1, 6, 11, 15],
+                remaining_cards_list: vec![16, 17, 18],
+            },
+        ];
+
+        let filename = "test_roundtrip.bin";
+        
+        // Save
+        save_to_file(&test_lists, filename).expect("Failed to save");
+        
+        // Load
+        let loaded = read_from_file(filename).expect("Failed to load");
+        
+        // Verify
+        assert_eq!(test_lists.len(), loaded.len());
+        for (orig, load) in test_lists.iter().zip(loaded.iter()) {
+            assert_eq!(orig.n, load.n);
+            assert_eq!(orig.max_card, load.max_card);
+            assert_eq!(orig.no_set_list, load.no_set_list);
+            assert_eq!(orig.remaining_cards_list, load.remaining_cards_list);
+        }
+        
+        // Cleanup
+        std::fs::remove_file(filename).ok();
+    }
 }
