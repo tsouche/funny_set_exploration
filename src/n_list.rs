@@ -125,7 +125,7 @@ pub struct ListOfNlist {
 impl ListOfNlist {
 
     /// Max number of n-list saved per file
-    pub const MAX_NLISTS_PER_FILE: u64 = 1_000_000;
+    pub const MAX_NLISTS_PER_FILE: u64 = 5_000_000;
 
     /// Creates a new, empty ListOfNlist with n indicating the size of the
     /// current n-lists
@@ -211,9 +211,7 @@ impl ListOfNlist {
                     eprintln!("Error saving new n-lists to file during build");
                     return; // early exit on error
                 }
-                println!("   ... saved new batch to {}", filename(self.size, self.new_file_count));
-                // increment the file number
-                self.new_file_count += 1;
+                println!("   ... saved new batch to {}", filename(self.size, self.new_file_count-1));
                 // reset the new vector
                 self.new.clear();
             }
@@ -256,7 +254,13 @@ impl ListOfNlist {
                     break;
                 }
             }
-            //
+        }
+        // save any remaining new n-lists to file
+        if self.new.len() > 0 {
+            if self.save_new_to_file() {
+                println!("   ... saved final new batch to {}", 
+                    filename(self.size, self.new_file_count-1));
+            }
         }
     }
 

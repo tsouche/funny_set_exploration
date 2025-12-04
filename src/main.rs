@@ -6,8 +6,6 @@ mod n_list;
 
 use crate::n_list::*;
 
-pub const MAX_CARDS_PER_BATCH: u64 = 20_000_000;
-
 fn main() {
     println!("Funny Set Exploration");
     println!("======================");
@@ -32,4 +30,14 @@ fn main() {
     // expand to 4 cards no-set lists
     let mut no_set_04_lists: ListOfNlist = ListOfNlist::new(3);
     no_set_04_lists.process_all_files_for_size_n(3);
+
+    // expand to 5 cards no-set lists
+    let mut no_set_05_lists: ListOfNlist = ListOfNlist::new(4);
+    no_set_05_lists.process_all_files_for_size_n(4);
+
+    // expand to 6 cards no-set lists
+    let mut no_set_06_lists: ListOfNlist = ListOfNlist::new(5);
+    no_set_06_lists.process_all_files_for_size_n(5);
+
+
 }
