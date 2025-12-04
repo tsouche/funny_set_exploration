@@ -10,7 +10,7 @@
 /// The main function is `build_n+1_set()` which builds the list of all possible
 /// no-set-n+1 from a given no-set-n list.
 
-use crate::is_set::contains_set;
+use crate::is_set::*;
 
 pub struct NList {
     pub n: u8,
@@ -20,23 +20,36 @@ pub struct NList {
 }
 
 impl NList {
-    pub fn to_string(&self) {
+    pub fn to_string(&self) -> String {
+        // check there are at least 3 cards in no-set-list
+        let nsl_len = self.no_set_list.len();
+        if nsl_len < 3 {
+            return "invalid".to_string();
+        }
+        // build no-set-list message
         let mut nsl_msg = "(".to_string();
-        for i in no_set_list {
+        for i in &self.no_set_list {
             nsl_msg.push_str(&format!("{:>2}", i));
-            if i < no_set_list.len() - 1 {
+            if i + 1 < nsl_len {
                 nsl_msg.push_str(",");
             }
         }
         nsl_msg.push_str(")");
-        let mut rcl_msg = " [".to_string();
-        for i in remaining_cards_list {
-            rcl_msg.push_str(&format!("{:>2}", i));
-            if i < remaining_cards_list.len() - 1 {
-                rcl_msg.push_str(",");
+        // build remaining cards list message
+        let rcl_len = self.remaining_cards_list.len();
+        let mut rcl_msg = "[".to_string();
+        if rcl_len == 0 {
+            rcl_msg.push_str("...");
+        } else {
+            for i in 0..rcl_len  {
+                rcl_msg.push_str(&format!("{:>2}", self.remaining_cards_list[i]));
+                if i + 1 < rcl_len {
+                    rcl_msg.push_str(",");
+                }
             }
         }
         rcl_msg.push_str("]");
+        // consolidate the whole string
         return format!("{:>2}-list: max={:>2} : {}+{}", self.n, self.max_card, nsl_msg, rcl_msg);
     }
 }
@@ -60,14 +73,13 @@ impl NList {
 pub fn create_all_03_no_set_lists() -> Vec<NList> {
     // we will store the results in this vector
     let mut no_set_03 = Vec::new();
-    // create the no-set-03 combinations: knowing that we will need to have at least 12 cards on the table eventually, we limit the max card index to 72 (i.e. one will need to complement the 3 cards with at least 9 more coards to get to 12).
+    // create the no-set-03 combinations (i < 70 to get to at least 12 cards)
     for i in 0..70 {
         for j in (i + 1)..71 {
             for k in (j + 1)..72 {
                 // (i,j,k) is a candidate for a no-set-03 combination
-                let table = vec![i, j, k];
-                if !contains_set(&table) {
-                    // found a no-set-03 combination
+                if !is_set(i, j, k) {
+                    // (i,j,k) is a no-set-03 combination
                     // build a 'remainign list' with all the possible values 
                     let mut remaining_cards = vec![k+1..81];
                     // remove from this list all cards that would create a set
@@ -75,15 +87,7 @@ pub fn create_all_03_no_set_lists() -> Vec<NList> {
                     let c1 = next_to_set(i, j);
                     let c2 = next_to_set(i, k);
                     let c3 = next_to_set(j, k);
-                    if remaining_cards.contains(&c1) {
-                        remaining_cards.retain(|&x| x != c1);
-                    }
-                    if remaining_cards.contains(&c2) {
-                        remaining_cards.retain(|&x| x != c2);
-                    }
-                    if remaining_cards.contains(&c3) {
-                        remaining_cards.retain(|&x| x != c3);
-                    }
+                    remaining_cards.retain(|&x| x != c1 && x != c2 && x != c3);
                     // store the resulting n-list
                     let nlist = NList {
                         n: 3,

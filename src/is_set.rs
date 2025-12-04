@@ -1,16 +1,19 @@
-/// Various helpers when manipulating set cards
-/// 
+/// Various helpers when manipulating Set cards
+///
+/// This module exposes helpers to test whether three indices form a Set,
+/// compute the index that completes a set for two cards, and test whether a
+/// slice of indices contains any set.
 
-fn all_cards() -> Vec<usize> {
+pub fn all_cards() -> Vec<usize> {
     // returns a vec with all 81 card indexes (0..80)
     let mut cards = Vec::new();
     for i in 0..81 {
-        cards.push(i);
+        cards.push(i as usize);
     }
     return cards;
 }
 
-fn index_to_base3(i: usize) -> [usize; 4] {
+pub fn index_to_base3(i: usize) -> [usize; 4] {
     // converts a card index (0..80) to its base-3 representation
     // representing the 4 attributes of the card
     let mut rem = i;
@@ -22,7 +25,8 @@ fn index_to_base3(i: usize) -> [usize; 4] {
     return base3;
 }
 
-fn is_set(i0: usize, i1: usize, i2: usize) -> bool {
+/// check whether the three given card form a valid Set
+pub fn is_set(i0: usize, i1: usize, i2: usize) -> bool {
     let base3 = [
         index_to_base3(i0), 
         index_to_base3(i1), 
@@ -43,3 +47,18 @@ fn is_set(i0: usize, i1: usize, i2: usize) -> bool {
         && (sum_base3[3] % 3 == 0);
 }
 
+/// Compute the card that completes the two given cards to form a valid set
+pub fn next_to_set(i0: usize, i1: usize) -> usize {
+    let b3_0 = index_to_base3(i0);
+    let b3_1 = index_to_base3(i1);
+    let mut b3_2 = [0; 4];
+    for j in 0..4 {
+        b3_2[j] = (3 - (b3_0[j] + b3_1[j]) % 3) % 3;
+    }
+    // convert back to index
+    let mut index = 0;
+    for j in 0..4 {
+        index = index * 3 + b3_2[j];
+    }
+    return index;
+}
