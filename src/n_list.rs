@@ -119,6 +119,7 @@ pub struct ListOfNlist {
     pub current: Vec<NList>,       // the current n-lists being processed
     pub current_file_count: u64,   // number of the current file being processed
     pub new: Vec<NList>,           // the newly created n+1-lists
+    pub new_list_count: u64,      // number of new n-lists created so far
     pub new_file_count: u64,       // number of files saved so far
 }
 
@@ -135,6 +136,7 @@ impl ListOfNlist {
             current: Vec::new(),
             current_file_count: 0,
             new: Vec::new(),
+            new_list_count: 0,
             new_file_count: 0,
         }
     }
@@ -143,10 +145,12 @@ impl ListOfNlist {
     ///      - increments the file count
     ///      - clears the new list (to make room for the next batch)
     pub fn save_new_to_file(&mut self) -> bool {
+        let additional_new = self.new.len() as u64;
         let filename = filename(self.size, self.new_file_count);
         match save_to_file(&self.new, &filename) {
             true => {
                 // the new vector has been saved successfully to file
+                self.new_list_count += additional_new;
                 self.new_file_count += 1;
                 self.new.clear();
                 return true;
@@ -262,6 +266,8 @@ impl ListOfNlist {
                     filename(self.size, self.new_file_count-1));
             }
         }
+        print!("Created a total of {} no-set-{:02} lists\n", 
+            self.new_list_count, self.size+1);
     }
 
 }
