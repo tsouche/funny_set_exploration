@@ -71,8 +71,8 @@ impl NList {
     ///          - if there are not enough cards left in the 'candidate n+1-remaining list' to complement the 'primary list' to 12 cards, it means that the card C is a dead-end: drop it and go to the next card C
     ///          - else you have created a valid n+1-list: store it for later processing, and move the next card C
     ///   - return the list of n+1-no_set_lists created
-    pub fn build_n_plus_1_no_set_lists(&self) -> Vec<NList> {
-        // we will store the resulting n+1-no_set_lists here
+    pub fn build_new_lists(&self) -> Vec<NList> {
+        // we will store the resulting n+1-no_set_lists in new
         let mut n_plus_1_lists = Vec::new();
         // for all card C in the remaining list
         for c in self.remaining_cards_list.iter() {
@@ -110,6 +110,163 @@ impl NList {
     }
 }
 
+/// A structure to hold a list of NList structures, with the ability to save to
+/// file the n+1-lists built from a given n-list, per batch of 
+/// MAX_NLISTS_PER_FILE, and to load a batch of n-lists from a given file.
+#[derive(Serialize, Deserialize)]
+pub struct ListOfNlist {
+    pub size: u8,                  // # of card in the new nlists
+    pub current: Vec<NList>,       // the current n-lists being processed
+    pub current_file_count: u64,   // number of the current file being processed
+    pub new: Vec<NList>,           // the newly created n+1-lists
+    pub new_file_count: u64,       // number of files saved so far
+}
+
+impl ListOfNlist {
+
+    /// Max number of n-list saved per file
+    pub const MAX_NLISTS_PER_FILE: u64 = 1_000_000;
+
+    /// Creates a new, empty ListOfNlist with n indicating the size of the
+    /// current n-lists
+    pub fn new(size: u8) -> Self {
+        return Self {
+            size,
+            current: Vec::new(),
+            current_file_count: 0,
+            new: Vec::new(),
+            new_file_count: 0,
+        }
+    }
+
+    /// Save the current batch of newly computed nlists to file
+    ///      - increments the file count
+    ///      - clears the new list (to make room for the next batch)
+    pub fn save_new_to_file(&mut self) -> bool {
+        let filename = filename(self.size, self.new_file_count);
+        match save_to_file(&self.new, &filename) {
+            true => {
+                // the new vector has been saved successfully to file
+                self.new_file_count += 1;
+                self.new.clear();
+                return true;
+            },
+            false => {
+                // error saving to file
+                eprintln!("Error saving new list to file {}", filename);
+                return false;
+            }
+        }
+    }
+
+    /// Load a batch of current n-lists from a given file and populate the 
+    /// current list with it.
+    /// 
+    /// Typical usage: when the current list has been fully processed and we
+    /// want to load the next batch of n-lists (of the same size or not) to 
+    /// process.
+    /// 
+    /// Arguments
+    ///     - size: number of card in the current list
+    ///     - number of the batch file to load
+    /// Returns true on success, false on failure
+    pub fn refill_current_from_file(&mut self, current_file_number: u64, size: u8) 
+        -> bool {
+        let filename = filename(self.size, current_file_number);
+        match read_from_file(&filename) {
+            Some(vec_nlist) => {
+                // successfully read the current vector from file
+                self.current = vec_nlist;
+                return true;
+            },
+            None => {
+                // error reading from file
+                eprintln!("Error loading n-lists from file {}", filename);
+                return false;
+            }
+        }
+    }
+
+    /// Processes the current n-lists to build the new lists
+    /// Argument: none
+    /// Returns: none
+    /// and:
+    ///     - writes the new n-lists to file in batches of MAX_NLISTS_PER_FILE
+    pub fn build_new_lists(&mut self) {
+
+        // do NOT reset the parameters
+
+        // run the algorithm for each list in the current vector 
+        for i in 0..self.current.len() {
+            // clone the current n-list
+            let current_nlist = self.current[i].clone();
+            // build the new n-lists from the current n-list
+            let new_nlists = current_nlist.build_new_lists();
+            // add the newly created n-lists to the new vector
+            self.new.extend(new_nlists);
+            // check if we have reached the max number of n-lists per file
+            if self.new.len() as u64 >= Self::MAX_NLISTS_PER_FILE {
+                // save the new n-lists to file
+                if !self.save_new_to_file() {
+                    eprintln!("Error saving new n-lists to file during build");
+                    return; // early exit on error
+                }
+                println!("   ... saved new batch to {}", filename(self.size, self.new_file_count));
+                // increment the file number
+                self.new_file_count += 1;
+                // reset the new vector
+                self.new.clear();
+            }
+        }
+    }
+
+    /// Process all the files for a given size of n-lists
+    /// Argument:
+    ///     - size: number of card in the n-lists to process
+    /// Returns:
+    ///     - number of new n-lists created
+    /// and
+    ///    - writes the new n-lists to file in batches of MAX_NLISTS_PER_FILE
+    pub fn process_all_files_for_size_n(&mut self, size: u8) {
+
+        // set all parameters to initial values
+        self.size = size + 1;           // we build the n+1-lists
+        self.current.clear();
+        self.current_file_count = 0;
+        self.new.clear();
+        self.new_file_count = 0;
+
+        // process all the files for the given size one after the other, until
+        // there is no more file to read
+        loop {
+            let filename = filename(size, self.current_file_count);
+            // try to read the current n-lists from file
+            match read_from_file(&filename) {
+                Some(vec_nlist) => {
+                    // successfully read the current vector from file
+                    println!("   ... start processing file {}", filename);
+                    self.current = vec_nlist;
+                    // build the new n-lists from the current n-lists
+                    self.build_new_lists();
+                    // increment the file number
+                    self.current_file_count += 1;
+                },
+                None => {
+                    // no more files to read, exit the loop
+                    break;
+                }
+            }
+            //
+        }
+    }
+
+}
+
+/// Generate a filename for a given n-list size and batch number
+pub fn filename(size: u8, batch_number: u64) -> String {
+    return format!("nlist_{:02}_batch_{:03}.bin", size, batch_number);
+}
+
 /// Saves a list of n-lists to a binary file using bincode serialization
 /// 
 /// # Arguments
@@ -119,10 +276,18 @@ impl NList {
 /// # Returns
 /// * `Ok(())` on success
 /// * `Err` containing the error if serialization or file write fails
-pub fn save_to_file(list_of_nlists: &Vec<NList>, filename: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let encoded = bincode::serialize(list_of_nlists)?;
-    std::fs::write(filename, encoded)?;
-    Ok(())
+pub fn save_to_file(list_of_nlists: &Vec<NList>, filename: &str) -> bool {
+    let encoded = bincode::serialize(list_of_nlists);
+    if encoded.is_err() {
+        eprintln!("Error serializing n-lists for file {}: {}", filename, encoded.err().unwrap());
+        return false;
+    }
+    let result = std::fs::write(filename, encoded.unwrap());
+    if result.is_err() {
+        eprintln!("Error writing n-lists to file {}: {}", filename, result.err().unwrap());
+        return false;
+    }
+    return true;
 }
 
 /// Reads a list of n-lists from a binary file using bincode deserialization
@@ -133,10 +298,15 @@ pub fn save_to_file(list_of_nlists: &Vec<NList>, filename: &str) -> Result<(), B
 /// # Returns
 /// * `Ok(Vec<NList>)` containing the deserialized list on success
 /// * `Err` containing the error if file read or deserialization fails
-pub fn read_from_file(filename: &str) -> Result<Vec<NList>, Box<dyn std::error::Error>> {
-    let bytes = std::fs::read(filename)?;
-    let decoded = bincode::deserialize(&bytes)?;
-    Ok(decoded)
+pub fn read_from_file(filename: &str) -> Option<Vec<NList>> {
+    let bytes : Vec<u8>;
+    let option_bytes = std::fs::read(filename).ok();
+    match option_bytes {
+        None => return None,
+        Some(b) => bytes = b,
+    }
+    let option_decoded = bincode::deserialize(&bytes).ok();
+    return option_decoded;
 }
 
 /// Build the list of all possible no-set-03 combinations, i.e. combinations of 

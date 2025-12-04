@@ -19,25 +19,17 @@ fn main() {
 
     // Create all seed lists (no-set-03 lists)
     let no_set_03_lists: Vec<NList> = n_list::create_all_03_no_set_lists();
-    n_list::save_to_file(
+    
+    if !n_list::save_to_file(
         &no_set_03_lists, 
-        "no_set_03_lists.bin").
-        expect("Failed to save no-set-03 lists");
+        &filename(3, 0)) {
+        eprintln!("Failed to save the seed lists");
+        return;
+    }
     println!("Created {} no-set-03 lists", no_set_03_lists.len());
 
 
     // expand to 4 cards no-set lists
-    let mut no_set_04_lists: Vec<NList> = Vec::new();
-    for list in &no_set_03_lists {
-        no_set_04_lists.extend(list.build_n_plus_1_no_set_lists());
-    }
-    n_list::save_to_file(
-        &no_set_04_lists, 
-        "no_set_04_lists.bin").
-        expect("Failed to save no-set-04 lists");
-    println!("From first no-set-03 list, created {} no-set-04 lists", no_set_04_lists.len());
-
-    // expand to 5 (and more) cards no-set lists
-    
-
+    let mut no_set_04_lists: ListOfNlist = ListOfNlist::new(3);
+    no_set_04_lists.process_all_files_for_size_n(3);
 }
