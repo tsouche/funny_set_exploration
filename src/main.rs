@@ -12,6 +12,7 @@ fn main() {
     println!("   - will create       58.896 no-set-lists with  3 cards");
     println!("   - will create    1.098.240 no-set-lists with  4 cards");
     println!("   - will create   13.394.538 no-set-lists with  5 cards");
+    println!("   - will create  141.370.218 no-set-lists with  6 cards");
     println!("======================");
     
 

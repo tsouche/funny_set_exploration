@@ -267,7 +267,7 @@ impl ListOfNlist {
             }
         }
         print!("Created a total of {} no-set-{:02} lists\n", 
-            self.new_list_count, self.size+1);
+            self.new_list_count, self.size);
     }
 
 }
