@@ -288,9 +288,6 @@ impl ListOfNlist {
             }
         }
         // this is done
-        self.new.clear();
-        self.new_list_count = 0;
-        self.new_file_count = 0;
         debug_print(&format!("process_all_files_of_current_size_n: Finished processing all files for size {:02}", 
             self.current_size));
         return self.new_list_count;

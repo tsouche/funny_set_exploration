@@ -12,7 +12,7 @@ use crate::list_of_nlists::{ListOfNlist, created_a_total_of};
 fn main() {
 
     /// Max number of n-list saved per file
-    const MAX_NLISTS_PER_FILE: u64 = 5_000_000;
+    const MAX_NLISTS_PER_FILE: u64 = 20_000_000;
 
 
     debug_print_off();
