@@ -116,6 +116,7 @@ impl NList {
 /// MAX_NLISTS_PER_FILE, and to load a batch of n-lists from a given file.
 #[derive(Serialize, Deserialize)]
 pub struct ListOfNlist {
+    static max_nlist_per_file: u64,  // max number of n-lists saved per file
     pub size: u8,                  // # of card in the new nlists
     pub current: Vec<NList>,       // the current n-lists being processed
     pub current_file_count: u64,   // number of the current file being processed
@@ -131,9 +132,10 @@ impl ListOfNlist {
 
     /// Creates a new, empty ListOfNlist with n indicating the size of the
     /// current n-lists
-    pub fn new(size: u8) -> Self {
+    pub fn new(max_nlist_per_file: u64) -> Self {
         return Self {
-            size,
+            max_nlist_per_file
+            size: 0,
             current: Vec::new(),
             current_file_count: 0,
             new: Vec::new(),
@@ -268,7 +270,55 @@ impl ListOfNlist {
             }
         }
         print!("Created a total of {:>15} no-set-{:02} lists\n", 
-            self.new_list_count.separated_string_with_separator('.'), self.size);
+            self.new_list_count.separated_string(), self.size);
+    }
+
+    /// Build the list of all possible no-set-03 combinations, i.e. combinations of 
+    /// 3 cards within which no valid set can be found, with their corresponding 
+    /// remaining cards list.
+    /// 
+    /// NB:
+    ///     - knowing that we will need to have at least 12 cards on the table 
+    ///       eventually, we limit the max card index to 72 (i.e. one will need to 
+    ///       complement the 3 cards with at least 9 more coards to get to 12).
+    ///     - if we want to focus on the no-set-table with 15 cards, we may stop at
+    ///       max card index 68 (i.e. one will need to complement the 3 cards with
+    ///       at least 12 more cards to get to 15).
+    ///     - if we want to focus on the no-set-table with 18 cards, we may stop at
+    ///       max card index 65 (i.e. one will need to complement the 3 cards with
+    ///       at least 15 more cards to get to 18).
+    pub fn create_seed_lists(&mut self) {
+        // we will store the results in the self.current vector
+        self.current.clear();
+        // create the no-set-03 combinations (i < 70 to get to at least 12 cards)
+        for i in 0..70 {
+            for j in (i + 1)..71 {
+                for k in (j + 1)..72 {
+                    // (i,j,k) is a candidate for a no-set-03 combination
+                    let table = vec![i, j, k];
+                    if !is_set(i, j, k) {
+                        // (i,j,k) is a no-set-03 combination
+                        // build a 'remaining list' with all the possible values strictly greater than k
+                        let mut remaining_cards: Vec<usize> = (k + 1..81).collect();
+                        // remove from this list all cards that would create a set
+                        // with any pair of cards in the current table
+                        let c1 = next_to_set(i, j);
+                        let c2 = next_to_set(i, k);
+                        let c3 = next_to_set(j, k);
+                        remaining_cards.retain(|&x| x != c1 && x != c2 && x != c3);
+                        // store the resulting n-list
+                        let nlist = NList {
+                            n: 3,
+                            max_card: k,
+                            no_set_list: table,
+                            remaining_cards_list: remaining_cards,
+                        };
+                        self.current.push(nlist);
+                    }
+                }
+            }
+        }
+        // done
     }
 
 }
@@ -320,53 +370,6 @@ pub fn read_from_file(filename: &str) -> Option<Vec<NList>> {
     return option_decoded;
 }
 
-/// Build the list of all possible no-set-03 combinations, i.e. combinations of 
-/// 3 cards within which no valid set can be found, with their corresponding 
-/// remaining cards list.
-/// 
-/// NB:
-///     - knowing that we will need to have at least 12 cards on the table 
-///       eventually, we limit the max card index to 72 (i.e. one will need to 
-///       complement the 3 cards with at least 9 more coards to get to 12).
-///     - if we want to focus on the no-set-table with 15 cards, we may stop at
-///       max card index 68 (i.e. one will need to complement the 3 cards with
-///       at least 12 more cards to get to 15).
-///     - if we want to focus on the no-set-table with 18 cards, we may stop at
-///       max card index 65 (i.e. one will need to complement the 3 cards with
-///       at least 15 more cards to get to 18).
-pub fn create_all_03_no_set_lists() -> Vec<NList> {
-    // we will store the results in this vector
-    let mut no_set_03 = Vec::new();
-    // create the no-set-03 combinations (i < 70 to get to at least 12 cards)
-    for i in 0..70 {
-        for j in (i + 1)..71 {
-            for k in (j + 1)..72 {
-                // (i,j,k) is a candidate for a no-set-03 combination
-                let table = vec![i, j, k];
-                if !is_set(i, j, k) {
-                    // (i,j,k) is a no-set-03 combination
-                    // build a 'remaining list' with all the possible values strictly greater than k
-                    let mut remaining_cards: Vec<usize> = (k + 1..81).collect();
-                    // remove from this list all cards that would create a set
-                    // with any pair of cards in the current table
-                    let c1 = next_to_set(i, j);
-                    let c2 = next_to_set(i, k);
-                    let c3 = next_to_set(j, k);
-                    remaining_cards.retain(|&x| x != c1 && x != c2 && x != c3);
-                    // store the resulting n-list
-                    let nlist = NList {
-                        n: 3,
-                        max_card: k,
-                        no_set_list: table,
-                        remaining_cards_list: remaining_cards,
-                    };
-                    no_set_03.push(nlist);
-                }
-            }
-        }
-    }
-    return no_set_03;
-}
 
 #[cfg(test)]
 mod tests {

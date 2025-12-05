@@ -14,10 +14,10 @@ fn main() {
     println!("   - will create   13.394.538 no-set-lists with  5 cards");
     println!("   - will create  141.370.218 no-set-lists with  6 cards");
     println!("======================");
-    
 
     // Create all seed lists (no-set-03 lists)
-    let no_set_03_lists: Vec<NList> = n_list::create_all_03_no_set_lists();
+    let mut no_set_lists: ListOfNlist = ListOfNlist::new(3);
+    no_set_lists.create_seed_lists();
     
     if !n_list::save_to_file(
         &no_set_03_lists, 
@@ -32,13 +32,21 @@ fn main() {
     let mut no_set_04_lists: ListOfNlist = ListOfNlist::new(3);
     no_set_04_lists.process_all_files_for_size_n(3);
 
+    // initiate the state before starting the expansion loop
+    let mut current_lists: ListOfNlist = ;
+    let mut new_lists: ListOfNlist;
+    for size in 4..18 {
+        // expand to size cards no-set lists
+        let mut no_set_n_lists: ListOfNlist = ListOfNlist::new(size - 1);
+        no_set_n_lists.process_all_files_for_size_n(size - 1);
+    }
     // expand to 5 cards no-set lists
-    let mut no_set_05_lists: ListOfNlist = ListOfNlist::new(4);
-    no_set_05_lists.process_all_files_for_size_n(4);
+    //let mut no_set_05_lists: ListOfNlist = ListOfNlist::new(4);
+    //no_set_05_lists.process_all_files_for_size_n(4);
 
     // expand to 6 cards no-set lists
-    let mut no_set_06_lists: ListOfNlist = ListOfNlist::new(5);
-    no_set_06_lists.process_all_files_for_size_n(5);
+    //let mut no_set_06_lists: ListOfNlist = ListOfNlist::new(5);
+    //no_set_06_lists.process_all_files_for_size_n(5);
 
 
 }
