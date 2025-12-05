@@ -13,6 +13,7 @@
 use crate::is_set::*;
 use std::cmp::min;
 use serde::{Serialize, Deserialize};
+use separator::Separatable;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct NList {
@@ -266,8 +267,8 @@ impl ListOfNlist {
                     filename(self.size, self.new_file_count-1));
             }
         }
-        print!("Created a total of {} no-set-{:02} lists\n", 
-            self.new_list_count, self.size);
+        print!("Created a total of {:>15} no-set-{:02} lists\n", 
+            self.new_list_count.separated_string_with_separator('.'), self.size);
     }
 
 }

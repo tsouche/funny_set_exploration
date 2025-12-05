@@ -16,6 +16,7 @@ name = "funny_set_exploration"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "separator",
  "serde",
 ]
 
@@ -36,6 +37,12 @@ checksum = "a338cc41d27e6cc6dce6cefc13a0729dfbb81c262b1f519331575dd80ef3067f"
 dependencies = [
  "proc-macro2",
 ]
+
+[[package]]
+name = "separator"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f97841a747eef040fcd2e7b3b9a220a7205926e60488e673d9e4926d27772ce5"
 
 [[package]]
 name = "serde"
