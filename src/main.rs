@@ -2,11 +2,12 @@
 /// with no sets
 
 mod utils;
-mod is_set;
-mod n_list;
+mod set;
+mod nlist;
+mod list_of_nlists;
 
 use crate::utils::*;
-use crate::n_list::*;
+use crate::list_of_nlists::{ListOfNlist, created_a_total_of};
 
 fn main() {
 

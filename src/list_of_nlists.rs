@@ -1,116 +1,24 @@
-/// This module enable to manage a 'n-list', i.e. a list of n-sized combinations
-/// of set cards (of value from 0 to 80):
+/// This module enable to manage lists of 'n-list', i.e. a vector of NList structures
+/// 
+/// Each NList structure represents a combination of n cards, represented by
+/// their indices in the full deck of 81 cards (from 0 to 80), such that:
 ///     - within which no valid set can be found
 ///     - with the corresponding list of 'remaining cards' that can be added to 
 ///       the n-sized combinations without creating a valid set
 /// 
-/// The methods provided here are used to build such n-lists incrementally,
-/// starting from no-set-03 combinations, then no-set-04, no-set-05, etc...
+/// The methods provided here are used to build such lists of NLists 
+/// incrementally, starting from no-set-03 combinations, then no-set-04, 
+/// no-set-05, etc...
 /// 
 /// The main function is `build_n+1_set()` which builds the list of all possible
 /// no-set-n+1 from a given no-set-n list.
 
-use crate::utils::*;
-use crate::is_set::*;
 use std::cmp::min;
 use serde::{Serialize, Deserialize};
 use separator::Separatable;
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct NList {
-    pub n: u8,
-    pub max_card: usize,
-    pub no_set_list: Vec<usize>,
-    pub remaining_cards_list: Vec<usize>,
-}
-
-impl NList {
-    /// return a string representation of the no-set-list
-    pub fn to_string(&self) -> String {
-        // check there are at least 3 cards in no-set-list
-        let nsl_len = self.no_set_list.len();
-        if nsl_len < 3 {
-            return "invalid".to_string();
-        }
-        // build no-set-list message
-        let mut nsl_msg = "(".to_string();
-        for i in &self.no_set_list {
-            nsl_msg.push_str(&format!("{:>2}", i));
-            if *i < nsl_len {
-                nsl_msg.push_str(".");
-            }
-        }
-        nsl_msg.push_str(")");
-        // build remaining cards list message
-        let rcl_len = self.remaining_cards_list.len();
-        let mut rcl_msg = "[".to_string();
-        if rcl_len == 0 {
-            rcl_msg.push_str("...");
-        } else {
-            for i in 0..rcl_len  {
-                rcl_msg.push_str(&format!("{:>2}", self.remaining_cards_list[i]));
-                if i + 1 < rcl_len {
-                    rcl_msg.push_str(".");
-                }
-            }
-        }
-        rcl_msg.push_str("]");
-        // consolidate the whole string
-        return format!("{:>2}-list: max={:>2} : {}+{}", self.n, self.max_card, nsl_msg, rcl_msg);
-    }
-
-    /// Return a list of n+1-no_set_lists built from the current n-no_set_list
-    /// Implementation note:
-    ///     - for all card C in the remaining list:
-    ///         - create a 'n+1-primary list' with the existing 'primary list' 
-    ///           extended with C
-    ///      - create a 'cadidate n+1-remaining list' for the 'primary list + C':
-    ///          - start from the 'remaining card' list
-    ///          - discard any card in this remaining list of a value =< C : this becomes the 'candidate n+1-remaining list'
-    ///          - for any card P in the 'primary list':
-    ///              - compute the thid card D which form a valid set with C and P
-    ///              - check if D is in the 'candidate n+1-remaining list': if yes, remove it from the list
-    ///          - if there are not enough cards left in the 'candidate n+1-remaining list' to complement the 'primary list' to 12 cards, it means that the card C is a dead-end: drop it and go to the next card C
-    ///          - else you have created a valid n+1-list: store it for later processing, and move the next card C
-    ///   - return the list of n+1-no_set_lists created
-    pub fn build_higher_nlists(&self) -> Vec<NList> {
-        // we will store the resulting n+1-no_set_lists in new
-        let mut n_plus_1_lists = Vec::new();
-        // for all card C in the remaining list
-        for c in self.remaining_cards_list.iter() {
-            // create the n+1-primary list
-            let mut n_plus_1_primary_list = self.no_set_list.clone();
-            n_plus_1_primary_list.push(*c);
-            // create the candidate n+1-remaining list (all cards above c)
-            let mut n_plus_1_remaining_list: Vec<usize> = self
-                .remaining_cards_list
-                .iter()
-                .filter(|&&x| x > *c)
-                .cloned()
-                .collect();
-            // for all card P in the primary list, remove from the candidate 
-            // remaining list any D card that would form a valid set with C and
-            // P
-            for p in self.no_set_list.iter() {
-                let d = next_to_set(*p, *c);
-                n_plus_1_remaining_list.retain(|&x| x != d);
-            }
-            // check if we have enough cards left in the candidate remaining list
-            let cards_needed = 12 - min(self.n as usize + 1, 12);
-            if n_plus_1_remaining_list.len() >= cards_needed {
-                // we have created a valid n+1-no_set_list: store it
-                let n_plus_1_nlist = NList {
-                    n: self.n + 1,
-                    max_card: *c,
-                    no_set_list: n_plus_1_primary_list,
-                    remaining_cards_list: n_plus_1_remaining_list,
-                };
-                n_plus_1_lists.push(n_plus_1_nlist);
-            }
-        }
-        return n_plus_1_lists;
-    }
-}
+use crate::utils::*;
+use crate::set::*;
+use crate::nlist::*;
 
 /// A structure to hold a list of NList structures, with the ability to save to
 /// file the n+1-lists built from a given n-list, per batch of 
@@ -220,7 +128,7 @@ impl ListOfNlist {
     ///     - size: number of card in the current list
     ///     - number of the batch file to load
     /// Returns true on success, false on failure
-    pub fn refill_current_from_file(&mut self) -> bool {
+    fn refill_current_from_file(&mut self) -> bool {
         // build the right file name
         let filename = filename(self.current_size, self.current_file_count);
         // try reading the file
@@ -251,7 +159,7 @@ impl ListOfNlist {
     /// Save the current batch of newly computed nlists to file
     ///      - increments the file count
     ///      - clears the new list (to make room for the next batch)
-    pub fn save_new_to_file(&mut self) -> bool {
+    fn save_new_to_file(&mut self) -> bool {
         // build the file name
         let file = filename(self.current_size+1, 
             self.new_file_count);
@@ -283,7 +191,7 @@ impl ListOfNlist {
     /// Returns: none
     /// and:
     ///     - writes the new n-lists to file in batches of MAX_NLISTS_PER_FILE
-    pub fn process_one_file_of_current_size_n(&mut self, max: &u64) {
+    fn process_one_file_of_current_size_n(&mut self, max: &u64) {
 
         // do NOT reset the parameters
         debug_print(&format!("process_one_file_of_current_size_n: Processing \
@@ -396,7 +304,7 @@ pub fn created_a_total_of(nb: u64, size: u8) {
 }
 
 /// Generate a filename for a given n-list size and batch number
-pub fn filename(size: u8, batch_number: u16) -> String {
+fn filename(size: u8, batch_number: u16) -> String {
     return format!("nlist_{:02}_batch_{:03}.bin", size, batch_number);
 }
 
@@ -409,7 +317,7 @@ pub fn filename(size: u8, batch_number: u16) -> String {
 /// # Returns
 /// * `Ok(())` on success
 /// * `Err` containing the error if serialization or file write fails
-pub fn save_to_file(list_of_nlists: &Vec<NList>, filename: &str) -> bool {
+fn save_to_file(list_of_nlists: &Vec<NList>, filename: &str) -> bool {
     let encoded = bincode::serialize(list_of_nlists);
     if encoded.is_err() {
         debug_print(&format!("save_to_file: Error serializing n-lists for file \
@@ -434,7 +342,7 @@ pub fn save_to_file(list_of_nlists: &Vec<NList>, filename: &str) -> bool {
 /// # Returns
 /// * `Ok(Vec<NList>)` containing the deserialized list on success
 /// * `Err` containing the error if file read or deserialization fails
-pub fn read_from_file(filename: &str) -> Option<Vec<NList>> {
+fn read_from_file(filename: &str) -> Option<Vec<NList>> {
     debug_print(&format!("read_from_file: Loading n-lists from file {}", 
         filename));
 
@@ -454,47 +362,3 @@ pub fn read_from_file(filename: &str) -> Option<Vec<NList>> {
     }
 }
 
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_bincode_roundtrip() {
-        // Create test data
-        let test_lists = vec![
-            NList {
-                n: 3,
-                max_card: 10,
-                no_set_list: vec![0, 5, 10],
-                remaining_cards_list: vec![11, 12, 13, 14],
-            },
-            NList {
-                n: 4,
-                max_card: 15,
-                no_set_list: vec![1, 6, 11, 15],
-                remaining_cards_list: vec![16, 17, 18],
-            },
-        ];
-
-        let filename = "test_roundtrip.bin";
-        
-        // Save
-        save_to_file(&test_lists, filename).expect("Failed to save");
-        
-        // Load
-        let loaded = read_from_file(filename).expect("Failed to load");
-        
-        // Verify
-        assert_eq!(test_lists.len(), loaded.len());
-        for (orig, load) in test_lists.iter().zip(loaded.iter()) {
-            assert_eq!(orig.n, load.n);
-            assert_eq!(orig.max_card, load.max_card);
-            assert_eq!(orig.no_set_list, load.no_set_list);
-            assert_eq!(orig.remaining_cards_list, load.remaining_cards_list);
-        }
-        
-        // Cleanup
-        std::fs::remove_file(filename).ok();
-    }
-}
