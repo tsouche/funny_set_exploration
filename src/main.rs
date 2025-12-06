@@ -1,30 +1,65 @@
 /// Manage the search for the grail of Set: combinations of 12 / 15 / 18 cards 
 /// with no sets
 ///
-/// VERSION 0.2.0 - Now using rkyv for zero-copy serialization
+/// VERSION 0.2.1 - Now using rkyv for zero-copy serialization
 /// 
 /// Key improvements:
 /// - Memory-mapped file access (zero-copy reading)
 /// - 10-100x faster file reads
 /// - ~50% reduction in peak memory usage
 /// - Backward compatible with old .bin files
+///
+/// CLI Usage:
+///   cargo run -- <size> [output_path]
+///
+/// Arguments:
+///   <size>         Target size to build (4-12)
+///                  Size 4 requires seed lists (size 3)
+///                  Size n>4 requires files nlist_(n-1)_batch_*.rkyv
+///   [output_path]  Optional: Directory for output files
+///                  Defaults to current directory
 
 mod utils;
 mod set;
 mod nlist;
 mod list_of_nlists;
 
+use clap::Parser;
 use crate::utils::*;
 use crate::list_of_nlists::{ListOfNlist, created_a_total_of};
+
+/// CLI arguments structure
+#[derive(Parser, Debug)]
+#[command(name = "funny_set_exploration")]
+#[command(about = "Generate no-set lists for the Set card game", long_about = None)]
+struct Args {
+    /// Target size for the no-set lists (4-12)
+    /// 
+    /// - Size 4: Builds from seed lists (size 3)
+    /// - Size 5+: Requires nlist_(size-1)_batch_*.rkyv files
+    #[arg(value_parser = clap::value_parser!(u8).range(4..=12))]
+    size: u8,
+
+    /// Output directory path (optional)
+    /// 
+    /// Examples:
+    ///   Windows: T:\data\funny_set_exploration
+    ///   Linux:   /mnt/nas/data/funny_set_exploration
+    ///   Relative: ./output
+    #[arg(short, long)]
+    output_path: Option<String>,
+}
 
 fn main() {
 
     /// Max number of n-list saved per file
     ///     - I usually set it at 20 millions.
-    ///     - With rkyv: each file will be about 4-4.5GB
-    ///     - Peak RAM usage: ~4-5GB (down from ~13.5GB with bincode)
+    ///     - With rkyv: each file will be about 1.9GB (down from 3.2GB with 
+    ///       bincode)
+    ///     - Peak RAM usage: ~10.5GB (down from ~13.5GB with bincode)
     ///     - Files are saved as .rkyv format (memory-mapped, zero-copy)
-    ///     - Old .bin files (bincode) are still readable for backward compatibility
+    ///     - Old .bin files (bincode) are still readable for backward 
+    ///       compatibility
     const MAX_NLISTS_PER_FILE: u64 = 20_000_000;
 
 
@@ -32,8 +67,8 @@ fn main() {
     test_print_on();
     banner("Funny Set Exploration");
     test_print("   - will create       58.896 no-set-lists with  3 cards");
-    test_print("   - will create    1.098.240 no-set-lists with  4 cards");
-    test_print("   - will create   13.394.538 no-set-lists with  5 cards");
+    test_print("   - will create    1.004.589 no-set-lists with  4 cards");
+    test_print("   - will create   14.399.127 no-set-lists with  5 cards");
     test_print("   - will create  155.769.345 no-set-lists with  6 cards");
     test_print("   - will create  ___.___.___ no-set-lists with  7 cards");
     test_print("   - will create  ___.___.___ no-set-lists with  8 cards");
