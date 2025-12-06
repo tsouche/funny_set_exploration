@@ -25,7 +25,7 @@ Welcome to the funny_set_exploration project documentation!
 
 Exhaustively finds all combinations of Set cards (12, 15, and 18 cards) that contain no valid sets.
 
-## Current Status (v0.2.0)
+## Current Status (v0.2.2)
 
 ✅ **Working:**
 
@@ -103,7 +103,7 @@ Each file is approximately 4GB and contains up to 20 million n-lists.
 | Metric | Value |
 |--------|-------|
 | Language | Rust (2024 edition) |
-| Current Version | 0.2.0 |
+| Current Version | 0.2.2 |
 | RAM Required | ~13.5GB peak |
 | File Size | ~4GB per batch |
 | Batch Size | 20M n-lists (configurable) |
@@ -145,4 +145,4 @@ See LICENSE file for details.
 ---
 
 **Last Updated:** December 6, 2025  
-**Version:** 0.2.0
+**Version:** 0.2.2

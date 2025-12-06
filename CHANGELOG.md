@@ -151,6 +151,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History Summary
 
+- **v0.2.2** (2025-12-06): CLI support with optional arguments
+- **v0.2.1** (2025-12-06): Zero-copy serialization with rkyv
 - **v0.2.0** (2025-12-06): Configurable output directories for file storage
 - **v0.1.0** (2025-12-04/05): Core implementation with batch processing
 - **v0.0.1** (2025-11-30): Initial project setup and documentation
