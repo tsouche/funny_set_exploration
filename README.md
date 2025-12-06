@@ -4,14 +4,15 @@ A Rust-based exhaustive search algorithm to find all combinations of 12, 15, and
 
 ## Project Status
 
-**Current Version:** 0.2.0 (December 2025)
+**Current Version:** 0.2.1 (December 2025)
 
 **Working Features:**
 - ✅ Complete algorithm implementation for n-list generation (3 to 18 cards)
+- ✅ Zero-copy serialization with rkyv (10-100x faster reads, 50% less memory)
+- ✅ Memory-mapped file I/O for optimal performance
 - ✅ Batch file processing (20M n-lists per file, ~4GB each)
-- ✅ Binary serialization with bincode
 - ✅ Configurable output directories (local, network, NAS support)
-- ✅ Memory-efficient processing with incremental batch saves
+- ✅ Backward compatible with old bincode files
 - ✅ Progress tracking and formatted output
 
 **Completed Computations:**

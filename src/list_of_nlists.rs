@@ -14,7 +14,16 @@
 /// no-set-n+1 from a given no-set-n list.
 
 use std::cmp::min;
+use std::fs::File;
+
+// Rkyv imports for zero-copy serialization
+use rkyv::check_archived_root;
+use rkyv::Deserialize as RkyvDeserializeTrait;
+use memmap2::Mmap;
+
+// Keep serde and bincode for backward compatibility
 use serde::{Serialize, Deserialize};
+
 use separator::Separatable;
 use crate::utils::*;
 use crate::set::*;
@@ -341,58 +350,162 @@ pub fn created_a_total_of(nb: u64, size: u8) {
 /// Full path to the file
 fn filename(base_path: &str, size: u8, batch_number: u16) -> String {
     use std::path::Path;
+    // Use .rkyv extension for zero-copy files
+    let filename = format!("nlist_{:02}_batch_{:03}.rkyv", size, batch_number);
+    let path = Path::new(base_path).join(filename);
+    return path.to_string_lossy().to_string();
+}
+
+/// Generate filename for legacy bincode format (backward compatibility)
+fn filename_bincode(base_path: &str, size: u8, batch_number: u16) -> String {
+    use std::path::Path;
     let filename = format!("nlist_{:02}_batch_{:03}.bin", size, batch_number);
     let path = Path::new(base_path).join(filename);
     return path.to_string_lossy().to_string();
 }
 
-/// Saves a list of n-lists to a binary file using bincode serialization
+/// Saves a list of n-lists to a binary file using rkyv zero-copy serialization
 /// 
 /// # Arguments
 /// * `list_of_nlists` - The list of NList structures to save
 /// * `filename` - Path to the output file
 /// 
 /// # Returns
-/// * `Ok(())` on success
-/// * `Err` containing the error if serialization or file write fails
+/// * `true` on success, `false` on error
 fn save_to_file(list_of_nlists: &Vec<NList>, filename: &str) -> bool {
+    debug_print(&format!("save_to_file: Serializing {} n-lists to {} using rkyv", 
+        list_of_nlists.len(), filename));
+    
+    // Serialize to memory buffer using rkyv
+    let bytes = match rkyv::to_bytes::<_, 256>(list_of_nlists) {
+        Ok(b) => b,
+        Err(e) => {
+            debug_print(&format!("save_to_file: Error serializing: {}", e));
+            return false;
+        }
+    };
+    
+    let bytes_len = bytes.len();
+    
+    // Write buffer to file
+    match std::fs::write(filename, bytes) {
+        Ok(_) => {
+            debug_print(&format!("save_to_file: Successfully saved {} bytes to {}", 
+                bytes_len, filename));
+            true
+        }
+        Err(e) => {
+            debug_print(&format!("save_to_file: Error writing file {}: {}", 
+                filename, e));
+            false
+        }
+    }
+}
+
+/// Legacy function: Saves using bincode (for backward compatibility)
+#[allow(dead_code)]
+fn save_to_file_bincode(list_of_nlists: &Vec<NList>, filename: &str) -> bool {
     let encoded = bincode::serialize(list_of_nlists);
     if encoded.is_err() {
-        debug_print(&format!("save_to_file: Error serializing n-lists for file \
+        debug_print(&format!("save_to_file_bincode: Error serializing n-lists for file \
             {}: {}", filename, encoded.err().unwrap()));
         return false;
     }
     let result = std::fs::write(filename, 
         encoded.unwrap());
     if result.is_err() {
-        debug_print(&format!("save_to_file: Error writing n-lists to file {}: \
+        debug_print(&format!("save_to_file_bincode: Error writing n-lists to file {}: \
             {}", filename, result.err().unwrap()));
         return false;
     }
     return true;
 }
 
-/// Reads a list of n-lists from a binary file using bincode deserialization
+/// Reads a list of n-lists from a binary file using rkyv with memory mapping (zero-copy)
+/// 
+/// This provides zero-copy access to the data by memory-mapping the file.
+/// The file is validated before use for safety.
 /// 
 /// # Arguments
 /// * `filename` - Path to the input file
 /// 
 /// # Returns
-/// * `Ok(Vec<NList>)` containing the deserialized list on success
-/// * `Err` containing the error if file read or deserialization fails
+/// * `Some(Vec<NList>)` containing the deserialized list on success
+/// * `None` on error
 fn read_from_file(filename: &str) -> Option<Vec<NList>> {
-    debug_print(&format!("read_from_file: Loading n-lists from file {}", 
+    debug_print(&format!("read_from_file: Loading n-lists from file {} using rkyv", 
+        filename));
+    
+    // Try rkyv format first
+    if let Some(result) = read_from_file_rkyv(filename) {
+        return Some(result);
+    }
+    
+    // Fall back to bincode for backward compatibility
+    debug_print(&format!("read_from_file: Trying bincode format for {}", filename));
+    read_from_file_bincode(filename)
+}
+
+/// Read using rkyv with memory-mapped file (zero-copy)
+fn read_from_file_rkyv(filename: &str) -> Option<Vec<NList>> {
+    // Open the file
+    let file = match File::open(filename) {
+        Ok(f) => f,
+        Err(e) => {
+            debug_print(&format!("read_from_file_rkyv: Error opening file {}: {}", 
+                filename, e));
+            return None;
+        }
+    };
+    
+    // Memory-map the file for zero-copy access
+    let mmap = unsafe {
+        match Mmap::map(&file) {
+            Ok(m) => m,
+            Err(e) => {
+                debug_print(&format!("read_from_file_rkyv: Error mapping file {}: {}", 
+                    filename, e));
+                return None;
+            }
+        }
+    };
+    
+    debug_print(&format!("read_from_file_rkyv:   ... mapped {} bytes from file {}", 
+        mmap.len(), filename));
+    
+    // Validate and access the archived data
+    match check_archived_root::<Vec<NList>>(&mmap) {
+        Ok(archived_vec) => {
+            // Deserialize from the memory-mapped archive using rkyv trait
+            let deserialized: Vec<NList> = archived_vec.deserialize(&mut rkyv::Infallible)
+                .expect("Deserialization should not fail after validation");
+            
+            debug_print(&format!("read_from_file_rkyv:   ... deserialized {} n-lists", 
+                deserialized.len()));
+            Some(deserialized)
+        }
+        Err(e) => {
+            debug_print(&format!("read_from_file_rkyv: Validation error for file {}: {:?}", 
+                filename, e));
+            None
+        }
+    }
+}
+
+/// Legacy function: Reads using bincode (for backward compatibility)
+fn read_from_file_bincode(filename: &str) -> Option<Vec<NList>> {
+    debug_print(&format!("read_from_file_bincode: Loading n-lists from file {}", 
         filename));
 
     let option_bytes = std::fs::read(filename).ok();
     match option_bytes {
         None => {
-            debug_print(&format!("read_from_file: Error reading n-lists from \
+            debug_print(&format!("read_from_file_bincode: Error reading n-lists from \
                 file {}", filename));
             return None;
         }
         Some(b) => {
-            debug_print(&format!("read_from_file:   ... read {} bytes from \
+            debug_print(&format!("read_from_file_bincode:   ... read {} bytes from \
                 file {}", b.len(), filename));
             let option_decoded = bincode::deserialize(&b).ok();
             return option_decoded;

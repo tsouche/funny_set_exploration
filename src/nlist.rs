@@ -12,9 +12,23 @@
 
 use crate::set::*;
 use std::cmp::min;
+
+// Rkyv support for zero-copy serialization
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
+
+// Keep serde for backward compatibility with bincode files
 use serde::{Serialize, Deserialize};
 
-#[derive(Clone, Serialize, Deserialize)]
+/// NList structure with both rkyv (new, zero-copy) and serde (old, bincode) support
+/// 
+/// The rkyv derives enable zero-copy deserialization:
+/// - Archive: Creates an archived representation (ArchivedNList)
+/// - Serialize: Serializes to archived format
+/// - Deserialize: Deserializes from archived format back to native
+#[derive(Clone)]
+#[derive(Archive, RkyvSerialize, RkyvDeserialize)]
+#[archive(check_bytes)]  // Enable validation for safety
+#[derive(Serialize, Deserialize)]  // Keep for backward compatibility
 pub struct NList {
     pub n: u8,
     pub max_card: usize,
