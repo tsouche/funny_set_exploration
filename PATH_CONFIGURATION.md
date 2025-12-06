@@ -2,7 +2,14 @@
 
 ## Overview
 
-The `funny_set_exploration` program now supports configurable output directories for saving and reading n-list batch files. This allows you to store the large data files on external drives, NAS storage, or any custom location.
+The `funny_set_exploration` program supports configurable output directories for saving and reading n-list batch files. This allows you to store the large data files (~4GB per batch) on external drives, NAS storage, or any custom location.
+
+**Version:** Added in v0.2.0 (December 2025)
+
+For general project documentation, see:
+- [`README.md`](README.md) - Project overview and quick start
+- [`CHANGELOG.md`](CHANGELOG.md) - Version history
+- [`TECHNICAL.md`](TECHNICAL.md) - Technical implementation details
 
 ## How to Configure the Output Path
 

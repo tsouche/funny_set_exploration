@@ -1,0 +1,114 @@
+# Changelog
+
+All notable changes to the funny_set_exploration project are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.2.0] - 2025-12-06
+
+### Added
+- **Configurable output directory**: Added support for custom base paths for file I/O operations
+  - New `base_path` field in `ListOfNlist` struct to store directory path
+  - New `with_path()` constructor to create `ListOfNlist` with custom output directory
+  - Support for Windows paths (local drives, mapped network drives, UNC paths)
+  - Support for Linux/macOS paths (absolute paths, NAS mount points, relative paths)
+  - Cross-platform path handling using `std::path::Path`
+- Documentation for path configuration (`PATH_CONFIGURATION.md`)
+- Example file demonstrating path usage patterns (`examples/path_examples.rs`)
+
+### Changed
+- Modified `filename()` function to accept `base_path` parameter and construct full paths
+- Updated all file operations (`save_to_file`, `read_from_file`, `refill_current_from_file`) to use base path
+- `ListOfNlist::new()` now defaults to current directory (".")
+- Improved in-code documentation with examples for Windows and Linux path syntax
+
+### Technical Details
+- Files are no longer saved only in the project root directory
+- Users can now specify output locations like NAS drives (e.g., `T:\data\funny_set_exploration` on Windows)
+- The `base_path` field is marked with `#[serde(skip)]` to avoid serialization
+
+## [0.1.0] - 2025-12-04 to 2025-12-05
+
+### Added
+- Initial working implementation of the n-list exploration algorithm
+- Core modules:
+  - `set.rs`: Set validation logic and card operations
+  - `nlist.rs`: N-list structure and operations
+  - `list_of_nlists.rs`: Batch processing and file I/O
+  - `utils.rs`: Debug and utility functions
+- Batch file processing with configurable limits (`MAX_NLISTS_PER_FILE`)
+- Binary serialization using `bincode` for efficient storage
+- Progress tracking and formatted output with `separator` crate
+- File batching system to manage large datasets (20 million n-lists per file, ~4GB each)
+
+### Implementation Milestones
+- 2025-12-05: Code linting and structure improvements
+- 2025-12-05: Added count tracking for newly created n-lists
+- 2025-12-04: Fixed bug where final batch of n-lists wasn't being saved
+- 2025-12-04: Implemented batching system for file I/O operations
+- 2025-12-04: Added serialization support for n-list persistence
+- 2025-12-04: Expanded algorithm to generate no-set-4 lists
+- 2025-12-04: Implemented n+1 list construction from n-lists
+- 2025-12-04: Created foundational data structures and functions
+
+### Algorithm Features
+- Seed list generation: Creates all valid 3-card combinations with no sets
+- Incremental expansion: Builds n+1-lists from n-lists iteratively
+- Optimization: Only explores cards with values greater than current maximum
+- Forbidden card tracking: Efficiently filters out cards that would form sets
+- Memory management: Batch processing to handle datasets that exceed RAM capacity
+
+## [0.0.1] - 2025-11-30 to 2025-12-01
+
+### Added
+- Initial repository setup
+- Project structure and build configuration
+- Comprehensive README documenting:
+  - Algorithm principles and optimization strategies
+  - Implementation approach (seed lists, incremental growth)
+  - Future optimization ideas (symmetry reduction)
+- Basic exploration strategy outline
+
+### Project Goals
+- Find all combinations of 12, 15, and 18 cards with no valid sets
+- Exhaustive search with optimized algorithms
+- Handle massive combination spaces efficiently
+
+## Version History Summary
+
+- **v0.2.0** (2025-12-06): Configurable output directories for file storage
+- **v0.1.0** (2025-12-04/05): Core implementation with batch processing
+- **v0.0.1** (2025-11-30): Initial project setup and documentation
+
+---
+
+## Future Considerations
+
+### Planned Enhancements
+- **Serialization Migration**: Consider replacing `bincode` with `rkyv` for:
+  - Zero-copy deserialization (10-100x faster reads)
+  - Reduced memory usage during file loading
+  - Memory-mapped file support for huge datasets
+  - Expected benefits: Lower peak RAM usage (~4-5GB vs current ~13.5GB)
+
+### Performance Optimizations
+- Symmetry reduction using card rotation properties
+- Parallel processing for independent n-list expansions
+- GPU acceleration for set validation operations
+
+### Features Under Consideration
+- Progress persistence (checkpoint/resume capability)
+- Multi-threaded file I/O
+- Compressed storage formats
+- Analysis tools for generated n-lists
+- Visualization of results
+
+---
+
+## Notes
+
+- Each batch file is approximately 4GB in size
+- Typical RAM usage peaks at ~13.5GB when batch is being saved
+- After saving, RAM usage drops to ~5GB
+- Default batch size: 20 million n-lists per file

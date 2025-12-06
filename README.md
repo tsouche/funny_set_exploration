@@ -1,6 +1,60 @@
-# funny_set_exploration
+# Funny Set Exploration
 
-Explore cards combination to find out Set Table with up to 18 cards and no set.
+A Rust-based exhaustive search algorithm to find all combinations of 12, 15, and 18 Set cards with no valid sets.
+
+## Project Status
+
+**Current Version:** 0.2.0 (December 2025)
+
+**Working Features:**
+- ✅ Complete algorithm implementation for n-list generation (3 to 18 cards)
+- ✅ Batch file processing (20M n-lists per file, ~4GB each)
+- ✅ Binary serialization with bincode
+- ✅ Configurable output directories (local, network, NAS support)
+- ✅ Memory-efficient processing with incremental batch saves
+- ✅ Progress tracking and formatted output
+
+**Completed Computations:**
+- 3-card lists: 58,896 combinations
+- 4-card lists: 1,098,240 combinations  
+- 5-card lists: 13,394,538 combinations
+- 6-card lists: 155,769,345 combinations
+- 7-card lists: In progress...
+
+## Quick Start
+
+### Prerequisites
+- Rust toolchain (2024 edition or later)
+- ~13.5GB RAM for processing
+- Significant disk space for output files (~4GB per batch file)
+
+### Build and Run
+```bash
+# Clone the repository
+git clone https://github.com/tsouche/funny_set_exploration.git
+cd funny_set_exploration
+
+# Build the project
+cargo build --release
+
+# Run the exploration
+cargo run --release
+```
+
+### Configure Output Directory
+
+By default, files are saved in the current directory. To use a custom location (e.g., NAS drive):
+
+**In `src/main.rs`:**
+```rust
+// Windows NAS example:
+let mut no_set_lists = ListOfNlist::with_path(r"T:\data\funny_set_exploration");
+
+// Linux NAS example:
+let mut no_set_lists = ListOfNlist::with_path("/mnt/nas/data/funny_set_exploration");
+```
+
+See [`PATH_CONFIGURATION.md`](PATH_CONFIGURATION.md) for detailed examples.
 
 ## Principle of the algorithm
 
@@ -69,6 +123,168 @@ Form the 15-lists, you can build the 16-, 17- and 18-list.
 
 We know that any able with 21 card will count multiple valid sets, so it is not usefull to ge beyond 18 cards.
 We could however compute - for the fun - the list of all possible 19- and 20-lists if there are any.
+
+## Implementation Details
+
+### File Organization
+
+The project is organized into the following modules:
+
+- **`src/main.rs`**: Entry point, configuration, and main processing loop
+- **`src/set.rs`**: Set game logic and card validation functions
+- **`src/nlist.rs`**: NList structure representing n-card combinations
+- **`src/list_of_nlists.rs`**: Batch processing, file I/O, and n+1 list generation
+- **`src/utils.rs`**: Debug printing and utility functions
+
+### Data Structures
+
+**NList**: Represents a combination of n cards with no sets
+
+```rust
+pub struct NList {
+    pub n: u8,                           // Number of cards
+    pub max_card: usize,                 // Highest card value
+    pub no_set_list: Vec<usize>,         // Cards in the combination
+    pub remaining_cards_list: Vec<usize> // Valid cards that can be added
+}
+```
+
+**ListOfNlist**: Manages batch processing and file operations
+
+```rust
+pub struct ListOfNlist {
+    pub current_size: u8,          // Size of current n-lists
+    pub current: Vec<NList>,       // Current n-lists being processed
+    pub new: Vec<NList>,           // Newly generated n+1-lists
+    pub base_path: String,         // Output directory for files
+    // ... tracking fields
+}
+```
+
+### File Format
+
+Output files use binary serialization (bincode) with the naming pattern:
+
+```
+nlist_{size:02}_batch_{number:03}.bin
+```
+
+Examples:
+
+- `nlist_03_batch_000.bin` - First batch of 3-card lists
+- `nlist_06_batch_007.bin` - 8th batch of 6-card lists
+
+### Performance Characteristics
+
+**Memory Usage:**
+
+- Peak: ~13.5GB when batch is being saved
+- Baseline: ~5GB after save completes
+- Scales with `MAX_NLISTS_PER_FILE` setting (default: 20 million)
+
+**File Sizes:**
+
+- ~4GB per batch file at default settings
+- ~8 batches for 6-card lists = ~32GB total
+
+**Processing Speed:**
+
+- Depends on number of valid combinations
+- 3-card lists: Nearly instant
+- 6-card lists: Minutes to hours
+- 7+ card lists: Hours to days per size increment
+
+## Configuration
+
+### Adjusting Batch Size
+
+In `src/main.rs`, modify `MAX_NLISTS_PER_FILE`:
+```rust
+const MAX_NLISTS_PER_FILE: u64 = 20_000_000;  // Default: 20 million
+```
+
+**Trade-offs:**
+
+- Larger: Fewer files, more RAM usage, longer save times
+- Smaller: More files, less RAM usage, more frequent disk I/O
+
+### Setting Output Directory
+
+See [`PATH_CONFIGURATION.md`](PATH_CONFIGURATION.md) for complete guide.
+
+**Quick examples:**
+
+```rust
+// Default - current directory
+let mut no_set_lists = ListOfNlist::new();
+
+// Windows NAS drive
+let mut no_set_lists = ListOfNlist::with_path(r"T:\data\funny_set_exploration");
+
+// Linux NAS mount
+let mut no_set_lists = ListOfNlist::with_path("/mnt/nas/data/funny_set_exploration");
+```
+
+## Dependencies
+
+- **serde** (1.0): Serialization framework
+- **bincode** (1.3): Binary encoding/decoding
+- **separator** (0.4): Number formatting with thousands separators
+
+## Future Optimizations
+
+### Planned Improvements
+
+**1. Serialization Upgrade (rkyv)**
+
+- Zero-copy deserialization (10-100x faster reads)
+- Reduced memory usage (~4-5GB vs current ~13.5GB peak)
+- Memory-mapped file support
+- See analysis in documentation for migration details
+
+**2. Symmetry Reduction**
+
+- Exploit card rotation properties to reduce search space
+- Potential 4x reduction (color rotations)
+- Investigate multi-attribute rotations (16x or more)
+
+**3. Parallel Processing**
+
+- Multi-threaded batch processing
+- Independent n-list expansion can be parallelized
+- GPU acceleration for set validation
+
+**4. Enhanced Features**
+
+- Checkpoint/resume capability for long-running computations
+- Compressed storage formats
+- Analysis and visualization tools
+- Statistics and distribution analysis of results
+
+## Contributing
+
+This project is part of an exploration of the Set card game mathematics. Contributions, optimizations, and ideas are welcome!
+
+## License
+
+See LICENSE file for details.
+
+## Related Projects
+
+- [Set Game Rules](https://en.wikipedia.org/wiki/Set_(card_game))
+- Other Set exploration repositories by @tsouche
+
+## Acknowledgments
+
+This exploration builds on the mathematical properties of the Set game and aims to exhaustively catalog all maximum no-set combinations.
+
+---
+
+**For detailed documentation:**
+
+- See [`CHANGELOG.md`](CHANGELOG.md) for version history
+- See [`PATH_CONFIGURATION.md`](PATH_CONFIGURATION.md) for output directory configuration
+- See source code comments for implementation details
 
 ## Next level optimisation
 
