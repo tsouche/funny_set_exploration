@@ -68,7 +68,9 @@ fn main() {
     ///       compatibility
     const MAX_NLISTS_PER_FILE: u64 = 20_000_000;
 
+    debug_print_on();
     debug_print_off();
+    test_print_off();
     test_print_on();
     banner("Funny Set Exploration");
     
@@ -115,16 +117,16 @@ fn main() {
         // =====================================================================
         // DEFAULT MODE: Original behavior
         // =====================================================================
-        test_print("   - will create       58.896 no-set-lists with  3 cards");
-        test_print("   - will create    1.004.589 no-set-lists with  4 cards");
-        test_print("   - will create   14.399.127 no-set-lists with  5 cards");
-        test_print("   - will create  155.769.345 no-set-lists with  6 cards");
-        test_print("   - will create  ___.___.___ no-set-lists with  7 cards");
-        test_print("   - will create  ___.___.___ no-set-lists with  8 cards");
-        test_print("   - will create  ___.___.___ no-set-lists with  9 cards");
-        test_print("   - will create  ___.___.___ no-set-lists with  10 cards");
-        test_print("   - will create  ___.___.___ no-set-lists with  11 cards");
-        test_print("   - will create  ___.___.___ no-set-lists with  12 cards");
+        test_print("   - will create        58.896 no-set-lists with  3 cards");
+        test_print("   - will create     1.004.589 no-set-lists with  4 cards");
+        test_print("   - will create    13.394.538 no-set-lists with  5 cards");
+        test_print("   - will create   141.370.218 no-set-lists with  6 cards");
+        test_print("   - will create   ___.___.___ no-set-lists with  7 cards");
+        test_print("   - will create   ___.___.___ no-set-lists with  8 cards");
+        test_print("   - will create   ___.___.___ no-set-lists with  9 cards");
+        test_print("   - will create   ___.___.___ no-set-lists with 10 cards");
+        test_print("   - will create   ___.___.___ no-set-lists with 11 cards");
+        test_print("   - will create   ___.___.___ no-set-lists with 12 cards");
         test_print("\n======================\n");
 
         // ========================================================================

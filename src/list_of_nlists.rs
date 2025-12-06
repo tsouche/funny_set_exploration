@@ -13,7 +13,6 @@
 /// The main function is `build_n+1_set()` which builds the list of all possible
 /// no-set-n+1 from a given no-set-n list.
 
-use std::cmp::min;
 use std::fs::File;
 
 // Rkyv imports for zero-copy serialization
@@ -357,12 +356,12 @@ fn filename(base_path: &str, size: u8, batch_number: u16) -> String {
 }
 
 /// Generate filename for legacy bincode format (backward compatibility)
-fn filename_bincode(base_path: &str, size: u8, batch_number: u16) -> String {
-    use std::path::Path;
-    let filename = format!("nlist_{:02}_batch_{:03}.bin", size, batch_number);
-    let path = Path::new(base_path).join(filename);
-    return path.to_string_lossy().to_string();
-}
+//fn filename_bincode(base_path: &str, size: u8, batch_number: u16) -> String {
+//    use std::path::Path;
+//    let filename = format!("nlist_{:02}_batch_{:03}.bin", size, batch_number);
+//    let path = Path::new(base_path).join(filename);
+//    return path.to_string_lossy().to_string();
+//}
 
 /// Saves a list of n-lists to a binary file using rkyv zero-copy serialization
 /// 
