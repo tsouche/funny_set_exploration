@@ -67,3 +67,10 @@ Form the 15-lists, you can build the 16-, 17- and 18-list.
 We know that any able with 21 card will count multiple valid sets, so it is not usefull to ge beyond 18 cards.
 We could however compute - for the fun - the list of all possible 19- and 20-lists if there are any.
 
+## Next level optimisation
+
+It seems obvious that symetries exist with cards combinations, which could be used to optimize further the computing: e.g. if a given no-set list exist, then rotating colors within that same combination should not change the fact that it is a no-set list. So, at minimum, one should be able to cut the computing effort by 4.
+
+It gets tricky when we consider 'rotating' several criterias at teh same time: e.g. color & shape? Could this bring a way tor educe the comuting effort by 16?
+
+And so on...

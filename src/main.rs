@@ -22,16 +22,19 @@ fn main() {
     test_print("   - will create       58.896 no-set-lists with  3 cards");
     test_print("   - will create    1.098.240 no-set-lists with  4 cards");
     test_print("   - will create   13.394.538 no-set-lists with  5 cards");
-    test_print("   - will create  141.370.218 no-set-lists with  6 cards");
+    test_print("   - will create  155.769.345 no-set-lists with  6 cards");
     test_print("======================\n");
 
-    // initiate a ListOfNlists with all seed lists (list of no-set combination 
-    // of 3 cards)
+    // Create the ListOfNlists used for all iterations
     let mut no_set_lists: ListOfNlist = ListOfNlist::new();
-    no_set_lists.create_seed_lists();
+
+    // create all seed lists (no-set-lists of size 3)
+    //no_set_lists.create_seed_lists();
 
     // expand from seed_lists to Nlist of size 4, 5, 6...
-    for size in 3..6 {
+    //for size in 3..6 {
+    for size in 6..9 {
+    //for size in 9..12 {
         test_print(&format!("Start processing the files to create no-set-lists \
             of size {}:", size+1));
         let nb_new = no_set_lists.process_all_files_of_current_size_n(size, 
