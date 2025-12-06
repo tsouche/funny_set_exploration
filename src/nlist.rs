@@ -10,11 +10,9 @@
 /// The main function is `build_n+1_set()` which builds the list of all possible
 /// no-set-n+1 from a given no-set-n list.
 
-use crate::utils::*;
 use crate::set::*;
 use std::cmp::min;
 use serde::{Serialize, Deserialize};
-use separator::Separatable;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct NList {

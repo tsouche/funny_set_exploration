@@ -32,12 +32,21 @@ pub struct ListOfNlist {
     pub new: Vec<NList>,           // the newly created n+1-lists
     pub new_file_count: u16,       // number of files saved so far
     pub new_list_count: u64,       // number of new n-lists created so far
+    #[serde(skip)]
+    pub base_path: String,         // base directory for saving/loading files
 }
 
 impl ListOfNlist {
 
     /// Creates a new, empty ListOfNlist with n indicating the size of the
     /// current n-lists
+    /// 
+    /// # Arguments
+    /// * `base_path` - Optional base directory path for saving/loading files.
+    ///                 If None, uses current directory (".").
+    ///                 Examples:
+    ///                 - Windows: r"T:\data\funny_set_exploration"
+    ///                 - Linux: "/mnt/nas/data/funny_set_exploration"
     pub fn new() -> Self {
         return Self {
             current_size: 0,
@@ -47,6 +56,27 @@ impl ListOfNlist {
             new: Vec::new(),
             new_file_count: 0,
             new_list_count: 0,
+            base_path: String::from("."),
+        }
+    }
+
+    /// Creates a new ListOfNlist with a custom base path
+    /// 
+    /// # Arguments
+    /// * `base_path` - Base directory path for saving/loading files
+    ///                 Examples:
+    ///                 - Windows: r"T:\data\funny_set_exploration"
+    ///                 - Linux: "/mnt/nas/data/funny_set_exploration"
+    pub fn with_path(base_path: &str) -> Self {
+        return Self {
+            current_size: 0,
+            current: Vec::new(),
+            current_file_count: 0,
+            current_list_count: 0,
+            new: Vec::new(),
+            new_file_count: 0,
+            new_list_count: 0,
+            base_path: String::from(base_path),
         }
     }
 
@@ -105,7 +135,7 @@ impl ListOfNlist {
 
         // done with creating all seed-lists: save them to file
         created_a_total_of(self.current_list_count, 3);
-        let file = filename(3, 0);
+        let file = filename(&self.base_path, 3, 0);
         match save_to_file(&self.current, &file) {
             true => debug_print(&format!("create_seed_lists:   ... saved {} seed \
                         lists to {}", self.current_list_count, file)),
@@ -130,7 +160,7 @@ impl ListOfNlist {
     /// Returns true on success, false on failure
     fn refill_current_from_file(&mut self) -> bool {
         // build the right file name
-        let filename = filename(self.current_size, self.current_file_count);
+        let filename = filename(&self.base_path, self.current_size, self.current_file_count);
         // try reading the file
         match read_from_file(&filename) {
             Some(vec_nlist) => {
@@ -161,7 +191,7 @@ impl ListOfNlist {
     ///      - clears the new list (to make room for the next batch)
     fn save_new_to_file(&mut self) -> bool {
         // build the file name
-        let file = filename(self.current_size+1, 
+        let file = filename(&self.base_path, self.current_size+1, 
             self.new_file_count);
         // get the number of new n-lists to be saved
         let additional_new = self.new.len() as u64;
@@ -280,7 +310,7 @@ impl ListOfNlist {
             debug_print(&format!("process_all_files_of_current_size_n:   \
                 ... will save final batch of {} new lists to {}", 
                 self.new.len(),
-                filename(self.current_size+1, self.new_file_count)));
+                filename(&self.base_path, self.current_size+1, self.new_file_count)));
             if self.save_new_to_file() {
                 debug_print("process_all_files_of_current_size_n:   ... final batch saved successfully");
             } else {
@@ -301,8 +331,19 @@ pub fn created_a_total_of(nb: u64, size: u8) {
 }
 
 /// Generate a filename for a given n-list size and batch number
-fn filename(size: u8, batch_number: u16) -> String {
-    return format!("nlist_{:02}_batch_{:03}.bin", size, batch_number);
+/// 
+/// # Arguments
+/// * `base_path` - Base directory path (e.g., ".", "T:\\data\\funny_set_exploration", "/mnt/nas/data")
+/// * `size` - Size of the n-list
+/// * `batch_number` - Batch number
+/// 
+/// # Returns
+/// Full path to the file
+fn filename(base_path: &str, size: u8, batch_number: u16) -> String {
+    use std::path::Path;
+    let filename = format!("nlist_{:02}_batch_{:03}.bin", size, batch_number);
+    let path = Path::new(base_path).join(filename);
+    return path.to_string_lossy().to_string();
 }
 
 /// Saves a list of n-lists to a binary file using bincode serialization
