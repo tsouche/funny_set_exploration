@@ -5,16 +5,20 @@ Welcome to the funny_set_exploration project documentation!
 ## Quick Links
 
 ### Getting Started
+
 - **[README.md](README.md)** - Start here! Project overview, quick start guide, and basic usage
 - **[PATH_CONFIGURATION.md](PATH_CONFIGURATION.md)** - Configure custom output directories (NAS, external drives, etc.)
 
 ### Project History
+
 - **[CHANGELOG.md](CHANGELOG.md)** - Complete version history and feature additions
 
 ### Technical Details
+
 - **[TECHNICAL.md](TECHNICAL.md)** - In-depth technical documentation, architecture, and algorithms
 
 ### Examples
+
 - **[examples/path_examples.rs](examples/path_examples.rs)** - Code examples for different path configurations
 
 ## What This Project Does
@@ -24,12 +28,14 @@ Exhaustively finds all combinations of Set cards (12, 15, and 18 cards) that con
 ## Current Status (v0.2.0)
 
 ✅ **Working:**
+
 - Complete algorithm implementation
 - Batch file processing (20M lists per ~4GB file)
 - Configurable output directories
 - Memory-efficient processing
 
 🔍 **In Progress:**
+
 - Computing 7+ card combinations
 - Performance optimization research
 
@@ -86,6 +92,7 @@ nlist_{size:02}_batch_{number:03}.bin
 ```
 
 Examples:
+
 - `nlist_03_batch_000.bin` - First batch of 3-card lists
 - `nlist_07_batch_042.bin` - 43rd batch of 7-card lists
 
@@ -115,6 +122,7 @@ Each file is approximately 4GB and contains up to 20 million n-lists.
 ## Future Enhancements
 
 See [CHANGELOG.md - Future Considerations](CHANGELOG.md#future-considerations) for:
+
 - rkyv serialization migration (zero-copy, faster)
 - Parallel processing
 - GPU acceleration
@@ -124,6 +132,7 @@ See [CHANGELOG.md - Future Considerations](CHANGELOG.md#future-considerations) f
 ## Support
 
 For questions or issues:
+
 1. Check the relevant documentation above
 2. Review [TECHNICAL.md - Known Issues](TECHNICAL.md#known-issues)
 3. Check git history for similar problems
