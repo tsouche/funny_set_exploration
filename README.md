@@ -4,18 +4,21 @@ A Rust-based exhaustive search algorithm to find all combinations of 12, 15, and
 
 ## Project Status
 
-**Current Version:** 0.2.1 (December 2025)
+**Current Version:** 0.2.2 (December 2025)
 
 **Working Features:**
+
 - ✅ Complete algorithm implementation for n-list generation (3 to 18 cards)
 - ✅ Zero-copy serialization with rkyv (10-100x faster reads, 50% less memory)
 - ✅ Memory-mapped file I/O for optimal performance
+- ✅ CLI support with optional arguments (--size, --output-path)
 - ✅ Batch file processing (20M n-lists per file, ~4GB each)
 - ✅ Configurable output directories (local, network, NAS support)
 - ✅ Backward compatible with old bincode files
 - ✅ Progress tracking and formatted output
 
 **Completed Computations:**
+
 - 3-card lists: 58,896 combinations
 - 4-card lists: 1,098,240 combinations  
 - 5-card lists: 13,394,538 combinations
@@ -25,11 +28,13 @@ A Rust-based exhaustive search algorithm to find all combinations of 12, 15, and
 ## Quick Start
 
 ### Prerequisites
+
 - Rust toolchain (2024 edition or later)
 - ~13.5GB RAM for processing
 - Significant disk space for output files (~4GB per batch file)
 
 ### Build and Run
+
 ```bash
 # Clone the repository
 git clone https://github.com/tsouche/funny_set_exploration.git
@@ -47,6 +52,7 @@ cargo run --release
 By default, files are saved in the current directory. To use a custom location (e.g., NAS drive):
 
 **In `src/main.rs`:**
+
 ```rust
 // Windows NAS example:
 let mut no_set_lists = ListOfNlist::with_path(r"T:\data\funny_set_exploration");
@@ -166,7 +172,7 @@ pub struct ListOfNlist {
 
 Output files use binary serialization (bincode) with the naming pattern:
 
-```
+```bash
 nlist_{size:02}_batch_{number:03}.bin
 ```
 
@@ -200,6 +206,7 @@ Examples:
 ### Adjusting Batch Size
 
 In `src/main.rs`, modify `MAX_NLISTS_PER_FILE`:
+
 ```rust
 const MAX_NLISTS_PER_FILE: u64 = 20_000_000;  // Default: 20 million
 ```

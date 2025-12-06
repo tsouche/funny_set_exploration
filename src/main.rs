@@ -1,7 +1,7 @@
 /// Manage the search for the grail of Set: combinations of 12 / 15 / 18 cards 
 /// with no sets
 ///
-/// VERSION 0.2.1 - Now using rkyv for zero-copy serialization
+/// VERSION 0.2.2 - CLI support with optional arguments
 /// 
 /// Key improvements:
 /// - Memory-mapped file access (zero-copy reading)

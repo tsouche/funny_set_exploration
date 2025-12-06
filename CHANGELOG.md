@@ -5,6 +5,34 @@ All notable changes to the funny_set_exploration project are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2025-12-06
+
+### Added
+
+- **CLI support with optional arguments**: Added command-line interface using `clap`
+  - `--size` / `-s` option to build specific sizes (4-12)
+  - `--output-path` / `-o` option to specify custom output directory
+  - Help documentation accessible via `--help`
+- Default behavior preserved when no arguments provided
+- `CLI_USAGE.md` - Comprehensive CLI usage guide with examples
+
+### Changed
+
+- `main.rs` now supports dual modes: default behavior (no args) or CLI mode (with args)
+- Added `clap = { version = "4.5", features = ["derive"] }` dependency
+
+### Fixed
+
+- Toolchain configuration: Fixed GNU toolchain compatibility
+  - Removed conflicting LLVM MinGW package
+  - Installed WinLibs MinGW-w64 with proper GCC libraries
+  - Resolved linker errors (`libgcc`, `libgcc_eh`, `dlltool.exe`)
+
+### Notes
+
+- Executable is self-contained and can be copied/run from any location
+- Added `*.exe` to `.gitignore`
+
 ## [0.2.1] - 2025-12-06
 
 ### Added
