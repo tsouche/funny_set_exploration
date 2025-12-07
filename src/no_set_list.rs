@@ -259,7 +259,7 @@ pub struct NoSetListSerialized {
     pub remaining_cards_list: Vec<usize>,
 }
 
-// Conversion between NoSetList and NoSetListSerialized for hybrid v0.3.2 strategy
+// Conversion between NoSetList and NoSetListSerialized for hybrid v0.4.0 strategy
 impl NoSetList {
     /// Convert from heap-based NoSetListSerialized to stack-based NoSetList
     pub fn from_serialized(serialized: &NoSetListSerialized) -> Self {
@@ -273,7 +273,7 @@ impl NoSetList {
     
     /// Convert to heap-based NoSetListSerialized for I/O operations
     /// 
-    /// This enables hybrid v0.3.2 strategy:
+    /// This enables hybrid v0.4.0 strategy:
     /// - Use NoSetList (stack) for fast computation
     /// - Convert to NoSetListSerialized (heap) for compact serialization
     pub fn to_serialized(&self) -> NoSetListSerialized {

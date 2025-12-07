@@ -4,7 +4,7 @@ A Rust-based exhaustive search algorithm to find all combinations of 12, 15, and
 
 ## Project Status
 
-**Current Version:** 0.3.2 (December 2025)
+**Current Version:** 0.4.0 (December 2025)
 
 **Architecture:** Hybrid stack/heap implementation
 - **NoSetList** (stack arrays): Zero-allocation computation, 4-5× faster
@@ -96,7 +96,8 @@ Examples:
 
 ### Version History
 
-- **v0.3.2** (Current): Simplified to hybrid-only implementation
+- **v0.4.0** (Current): Added restart capability with modular file naming
+- **v0.3.2**: Simplified to hybrid-only implementation
   - Removed v0.2.2 (heap-based) and v0.3.0 (stack-only)
   - Cleaner codebase with single optimized approach
   - NoSetListSerialized for clear separation of concerns
@@ -119,7 +120,7 @@ Examples:
 
 **Size 6 processing (155M lists):**
 
-| Metric | v0.3.2 (Current) | v0.2.2 (Heap) |
+| Metric | v0.4.0 (Current) | v0.2.2 (Heap) |
 |--------|------------------|---------------|
 | Total time | ~308s | ~398s |
 | Computation | ~19s (6%) | ~225s (56%) |

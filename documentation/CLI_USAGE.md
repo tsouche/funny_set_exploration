@@ -2,7 +2,7 @@
 
 ## Overview
 
-Version 0.3.2 uses a simplified CLI with optional size and output-path arguments. The program uses a hybrid stack/heap implementation for optimal performance.
+Version 0.4.0 uses a simplified CLI with optional size, restart, and output-path arguments. The program uses a hybrid stack/heap implementation for optimal performance with restart capability.
 
 ## Running the Program
 
@@ -36,7 +36,7 @@ cargo run --release -- --size 4
 cargo run --release -- --size 7
 ```
 
-### CLI Mode: Size Range (v0.3.2+)
+### CLI Mode: Size Range (v0.4.0+)
 
 Process multiple sizes in a single run:
 

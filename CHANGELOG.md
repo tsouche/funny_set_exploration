@@ -5,6 +5,35 @@ All notable changes to the funny_set_exploration project are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2025-12-07
+
+### Added
+
+- **Restart capability**: Resume processing from a specific input size and batch
+  - New `--restart <SIZE> <BATCH>` CLI argument to resume interrupted processing
+  - Counts existing output files to preserve accurate totals across restarts
+  - Only counts files created from input batches before the restart point
+- **Modular file naming system**: Enhanced filename format for better tracking
+  - Format: `nsl_{source_size:02}_batch_{source_batch:03}_to_{target_size:02}_batch_{target_batch:03}.rkyv`
+  - Example: `nsl_05_batch_001_to_06_batch_000.rkyv` (from size 5 batch 1, creates size 6 batch 0)
+  - Each input batch creates independent set of output batches
+  - Unified filename helpers as single source of truth for consistency
+- **Per-file statistics**: Detailed logging of input/output counts per batch file
+
+### Fixed
+
+- **Batch processing bug**: Fixed issue where only batch 000 was processed for each size
+  - Changed `refill_current_from_file()` to search directory for matching pattern instead of constructing filename
+  - Uses wildcard pattern `*_to_{size}_batch_{batch}.rkyv` to find input files
+- **Restart baseline counting**: Correctly parses source batch numbers from filenames
+  - Counts outputs created from source batches < restart batch (allows reprocessing)
+
+### Changed
+
+- Enhanced output formatting with thousand separators (16-character padding)
+- Improved debug logging for file operations and batch processing
+- Updated CLI to support restart mode alongside size range mode
+
 ## [0.3.2] - 2025-12-07
 
 ### Changed

@@ -1,16 +1,19 @@
 /// Manage the search for the grail of Set: combinations of 12 / 15 / 18 cards 
 /// with no sets
 ///
-/// Version 0.3.2 - Hybrid: Stack computation + Heap I/O
+/// Version 0.4.0 - Hybrid: Stack computation + Heap I/O + Restart capability
 /// 
 /// CLI Usage:
-///   funny.exe --size 5 -o T:\data\funny_set_exploration  # Build size 5 from size 4
-///   funny.exe --size 5-7 -o T:\data\funny_set_exploration # Build sizes 5, 6, and 7
-///   funny.exe                                             # Default mode (sizes 4-6)
+///   funny.exe --size 5 -o T:\data\funny_set_exploration      # Build size 5 from size 4
+///   funny.exe --size 5-7 -o T:\data\funny_set_exploration    # Build sizes 5, 6, and 7
+///   funny.exe --restart 5 2 -o T:\data\funny_set_exploration # Restart from size 5 batch 2
+///   funny.exe                                                # Default mode (sizes 4-18)
 ///
 /// Arguments:
 ///   --size, -s <SIZE>       Target size to build (4-18, or range like 5-7)
-///                           If omitted, runs default behavior (creates seeds + sizes 4-6)
+///                           If omitted, runs default behavior (creates seeds + sizes 4-18)
+///   --restart <SIZE> <BATCH> Restart from specific input file (size and batch number)
+///                           Processes from that batch through size 18
 ///   --output-path, -o       Optional: Directory for output files
 ///                           Defaults to current directory
 ///
@@ -35,13 +38,23 @@ use crate::utils::*;
 struct Args {
     /// Target size for the no-set lists (4-18 or range like 5-7)
     /// 
-    /// If not provided, runs the default behavior (creates seeds + sizes 4-6)
+    /// If not provided, runs the default behavior (creates seeds + sizes 4-18)
     /// - Single size: "5" builds size 5 from size 4 files
     /// - Range: "5-7" builds sizes 5, 6, and 7 sequentially
     /// - Size 4: Builds from seed lists (size 3)
     /// - Size 5+: Requires files from previous size
-    #[arg(short, long)]
+    #[arg(short, long, conflicts_with = "restart")]
     size: Option<String>,
+
+    /// Restart from specific input file: <SIZE> <BATCH>
+    /// 
+    /// Examples:
+    ///   --restart 5 2   Restart from size 5, batch 2, continue through size 18
+    ///   --restart 7 0   Restart from size 7, batch 0 (first file)
+    /// 
+    /// This allows resuming processing after interruption
+    #[arg(long, num_args = 2, value_names = ["SIZE", "BATCH"])]
+    restart: Option<Vec<u16>>,
 
     /// Output directory path (optional)
     /// 
@@ -89,12 +102,12 @@ fn main() {
     // Parse command-line arguments
     let args = Args::parse();
 
-    /// Max number of n-list saved per file for v0.3.2
+    /// Max number of n-list saved per file for v0.4.0
     /// - Each NoSetList: 792 bytes during compute (stack)
     /// - Each NoSetListSerialized: ~100 bytes after conversion (heap)
     /// - 20M entries × 100 bytes = ~2GB per file after serialization
     /// - Peak RAM during save: ~10.5GB (vec + archive + overhead)
-    const MAX_NLISTS_PER_FILE: u64 = 20_000_000;
+    const MAX_NLISTS_PER_FILE: u64 = 10_000_000;
 
     // Initialize log file for test_print output
     init_log_file();
@@ -117,11 +130,75 @@ fn main() {
         None
     };
 
+    // Parse restart parameters if provided
+    let restart_params = if let Some(ref restart_vec) = args.restart {
+        if restart_vec.len() != 2 {
+            eprintln!("Error: --restart requires exactly 2 arguments: SIZE BATCH");
+            std::process::exit(1);
+        }
+        let size = restart_vec[0] as u8;
+        let batch = restart_vec[1];
+        if size < 4 || size > 18 {
+            eprintln!("Error: Restart size {} out of range (4-18)", size);
+            std::process::exit(1);
+        }
+        Some((size, batch))
+    } else {
+        None
+    };
+
     use crate::list_of_nsl::ListOfNSL;
 
     banner("Funny Set Exploration)");
     
-    if let Some((start_size, end_size)) = size_range {
+    if let Some((restart_size, restart_batch)) = restart_params {
+        // =====================================================================
+        // RESTART MODE: Resume from specific batch
+        // =====================================================================
+        test_print(&format!("RESTART MODE: Resuming from size {} batch {}", restart_size, restart_batch));
+        test_print(&format!("Will process through size 18"));
+        test_print("Strategy: Stack computation + Heap I/O");
+        test_print(&format!("Batch size: {} entries/file (~2GB, compact)", MAX_NLISTS_PER_FILE.separated_string()));
+        
+        if let Some(ref path) = args.output_path {
+            test_print(&format!("Output directory: {}", path));
+        } else {
+            test_print("Output directory: current directory");
+        }
+        test_print("\n======================\n");
+
+        // Initialize ListOfNSL with optional custom path
+        let mut no_set_lists: ListOfNSL = match args.output_path {
+            Some(path) => ListOfNSL::with_path(&path),
+            None => ListOfNSL::new(),
+        };
+
+        // Process from restart point through size 18
+        // restart_size is the INPUT size, so we create output starting from restart_size+1
+        for target_size in (restart_size + 1)..=18 {
+            let source_size = target_size - 1;
+            
+            if source_size == restart_size {
+                // First iteration: start from specified batch of the input size
+                test_print(&format!("Start processing files to create no-set-lists of size {} (from input batch {}):", 
+                    target_size, restart_batch));
+                let _nb_new = no_set_lists.process_from_batch(
+                    source_size,  // Input size
+                    restart_batch,
+                    &MAX_NLISTS_PER_FILE
+                );
+            } else {
+                // Subsequent iterations: process all files
+                test_print(&format!("Start processing files to create no-set-lists of size {}:", target_size));
+                let _nb_new = no_set_lists.process_all_files_of_current_size_n(
+                    source_size, 
+                    &MAX_NLISTS_PER_FILE
+                );
+            }
+            
+            test_print(&format!("\nCompleted size {}!\n", target_size));
+        }
+    } else if let Some((start_size, end_size)) = size_range {
         // =====================================================================
         // CLI MODE: Process size range
         // =====================================================================
