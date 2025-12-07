@@ -396,7 +396,7 @@ pub fn created_a_total_of(nb: u64, size: u8, elapsed_secs: f64) {
 fn filename(base_path: &str, size: u8, batch_number: u16) -> String {
     use std::path::Path;
     // Use .rkyv extension with size_32 encoding for compact 2GB files
-    let filename = format!("nlist_{:02}_batch_{:03}.rkyv", size, batch_number);
+    let filename = format!("no-set-list_{:02}_batch_{:03}.rkyv", size, batch_number);
     let path = Path::new(base_path).join(filename);
     path.to_string_lossy().to_string()
 }

@@ -163,7 +163,7 @@ fn main() {
                 &MAX_NLISTS_PER_FILE
             );
             
-            test_print(&format!("\nCompleted size {}! Generated files: nlist_{:02}_batch_*.rkyv\n", 
+            test_print(&format!("\nCompleted size {}! Generated files: no-set-list_{:02}_batch_*.rkyv\n", 
                 target_size, target_size));
         }
     } else {

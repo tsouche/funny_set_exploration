@@ -15,12 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Simplified codebase by removing `list_of_nlists.rs` (v0.2.2) and `list_of_nsl.rs` (v0.3.0)
 - **Module refactoring for clarity**:
   - Renamed `NList` → `NoSetListSerialized` to clarify its role as a serialization format
-  - Renamed `nlist.rs` → `no_set_list_serialized.rs` 
+  - Renamed `nlist.rs` → `no_set_list_serialized.rs`
   - Updated conversion methods: `from_nlist()`/`to_nlist()` → `from_serialized()`/`to_serialized()`
   - Renamed `ListOfNSLHybrid` → `ListOfNlist`
   - Renamed `list_of_nsl_hybrid.rs` → `list_of_nlists.rs`
 - **File naming simplified**: `nlist_v31_*` → `nlist_*` (removed version prefix)
 - **Updated CLI interface**:
+
   ```bash
   # Before (v0.3.1):
   funny.exe -v 31 --size 5-7 -o T:\data
@@ -32,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Architecture
 
 **Current Implementation (Hybrid Only):**
+
 - **NoSetList** (stack-based, fixed arrays): Fast computation with zero heap allocations
 - **NoSetListSerialized** (heap-based, Vec): Compact I/O format (~2GB per 20M batch)
 - **Conversion**: Explicit `to_serialized()`/`from_serialized()` between formats
@@ -61,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Performance
 
 **v0.3.1 vs v0.2.2 (size 6):**
+
 - Total time: 308s vs 398s (~23% faster)
 - Computation: 6.2% vs 53-57% (10× less time in algorithm)
 - File I/O: 54% vs 32-40% (larger share due to faster compute)
@@ -89,11 +92,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Performance
 
 **v0.3.0 vs v0.2.2 (size 5):**
+
 - Total time: 63s vs 380-426s (6-7× faster)
 - Computation: 2.3% vs 56% (25× faster algorithm)
 - File I/O: 89.8% vs 32-36% (became the bottleneck)
 
 **Trade-offs:**
+
 - ✅ 4-8× faster computation (zero malloc overhead)
 - ✅ Better cache locality with stack data
 - ❌ 7-8× larger files (~15GB vs ~2GB per batch)
