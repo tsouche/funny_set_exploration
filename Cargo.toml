@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 # Rkyv for zero-copy serialization (size_64 for archives > 4GB)
-rkyv = { version = "0.7", features = ["validation", "size_64"] }
+rkyv = { version = "0.7", default-features = false, features = ["std", "validation", "size_64"] }
 
 # Memory-mapped file support
 memmap2 = "0.9"

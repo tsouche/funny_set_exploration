@@ -34,6 +34,8 @@ pub struct ListOfNSL {
     pub new_file_count: u16,       // number of files saved so far
     pub new_list_count: u64,       // number of new n-lists created so far
     pub base_path: String,         // base directory for saving/loading files
+    pub computation_time: f64,     // time spent in core algorithm
+    pub file_io_time: f64,         // time spent in file I/O operations
 }
 
 impl ListOfNSL {
@@ -48,6 +50,8 @@ impl ListOfNSL {
             new_file_count: 0,
             new_list_count: 0,
             base_path: String::from("."),
+            computation_time: 0.0,
+            file_io_time: 0.0,
         }
     }
     
@@ -68,6 +72,8 @@ impl ListOfNSL {
             new_file_count: 0,
             new_list_count: 0,
             base_path: String::from(base_path),
+            computation_time: 0.0,
+            file_io_time: 0.0,
         }
     }
     
@@ -81,6 +87,9 @@ impl ListOfNSL {
     /// - For 15-card target: max_card = 68 (need 12 more cards)
     /// - For 18-card target: max_card = 65 (need 15 more cards)
     pub fn create_seed_lists(&mut self) {
+        // Start timing
+        let start_time = std::time::Instant::now();
+        
         // Initialize fields
         self.current_size = 3;
         self.current.clear();
@@ -157,7 +166,6 @@ impl ListOfNSL {
         self.current_list_count = self.current.len() as u64;
         
         // Save seed lists to file
-        created_a_total_of(self.current_list_count, 3);
         let file = filename(&self.base_path, 3, 0);
         match save_to_file(&self.current, &file) {
             true => debug_print(&format!("create_seed_lists: saved {} seed lists to {}", 
@@ -165,6 +173,11 @@ impl ListOfNSL {
             false => debug_print(&format!("create_seed_lists: Error saving seed lists to {}", 
                 file)),
         }
+        
+        // Report completion with timing
+        let elapsed = start_time.elapsed();
+        let elapsed_secs = elapsed.as_secs_f64();
+        created_a_total_of(self.current_list_count, 3, "v0.3.0", elapsed_secs);
         
         // Clear current list to make room for processing
         self.current.clear();
@@ -180,8 +193,13 @@ impl ListOfNSL {
     fn refill_current_from_file(&mut self) -> bool {
         let filename = filename(&self.base_path, self.current_size, self.current_file_count);
         
+        // Time the file read operation
+        let io_start = std::time::Instant::now();
+        
         match read_from_file(&filename) {
             Some(vec_nsl) => {
+                self.file_io_time += io_start.elapsed().as_secs_f64();
+                
                 let add_len = vec_nsl.len();
                 self.current.extend(vec_nsl);
                 self.current_list_count += add_len as u64;
@@ -192,6 +210,7 @@ impl ListOfNSL {
                 true
             }
             None => {
+                self.file_io_time += io_start.elapsed().as_secs_f64();
                 debug_print(&format!("refill_current_from_file: Error loading from {}", 
                     filename));
                 false
@@ -209,8 +228,12 @@ impl ListOfNSL {
         let file = filename(&self.base_path, self.current_size + 1, self.new_file_count);
         let additional_new = self.new.len() as u64;
         
+        // Time the file write operation
+        let io_start = std::time::Instant::now();
+        
         match save_to_file(&self.new, &file) {
             true => {
+                self.file_io_time += io_start.elapsed().as_secs_f64();
                 self.new_list_count += additional_new;
                 self.new_file_count += 1;
                 self.new.clear();
@@ -219,6 +242,7 @@ impl ListOfNSL {
                 true
             }
             false => {
+                self.file_io_time += io_start.elapsed().as_secs_f64();
                 debug_print(&format!("save_new_to_file: Error saving to {}", file));
                 false
             }
@@ -246,8 +270,12 @@ impl ListOfNSL {
             // Pop current n-list
             let current_nsl = self.current.pop().unwrap();
             
+            // Time the core computation
+            let comp_start = std::time::Instant::now();
             // Build new n-lists using STACK-OPTIMIZED algorithm
             let new_nsls = current_nsl.build_higher_nsl();
+            self.computation_time += comp_start.elapsed().as_secs_f64();
+            
             debug_print_noln(&format!("-> +{:>5} new - ", new_nsls.len()));
             
             // Add to new vector
@@ -287,6 +315,13 @@ impl ListOfNSL {
         debug_print(&format!("process_all_files_of_current_size_n: start processing \
             no-set-{:02}", current_size));
         
+        // Start timing
+        let start_time = std::time::Instant::now();
+        
+        // Reset timing counters
+        self.computation_time = 0.0;
+        self.file_io_time = 0.0;
+        
         // Initialize
         self.current_size = current_size;
         self.current.clear();
@@ -322,8 +357,22 @@ impl ListOfNSL {
             }
         }
         
+        let elapsed = start_time.elapsed();
+        let elapsed_secs = elapsed.as_secs_f64();
+        let overhead = elapsed_secs - self.computation_time - self.file_io_time;
+        
         debug_print(&format!("process_all_files_of_current_size_n: Finished processing \
             size {:02}", self.current_size));
+        
+        // Report total with breakdown
+        created_a_total_of(self.new_list_count, self.current_size + 1, 
+            "v0.3.0", elapsed_secs);
+        test_print(&format!("   ... timing breakdown: computation {:.2}s \
+            ({:.1}%), file I/O {:.2}s ({:.1}%), overhead {:.2}s ({:.1}%)\n",
+            self.computation_time, (self.computation_time / elapsed_secs * 100.0),
+            self.file_io_time, (self.file_io_time / elapsed_secs * 100.0),
+            overhead, (overhead / elapsed_secs * 100.0)));
+        
         self.new_list_count
     }
 }
@@ -334,10 +383,14 @@ impl Default for ListOfNSL {
     }
 }
 
-/// Helper to print large numbers with thousand separators
-pub fn created_a_total_of(nb: u64, size: u8) {
-    test_print(&format!("   ... created a total of {:>15} no-set-{:02} lists", 
-        nb.separated_string(), size));
+/// Helper to print large numbers with thousand separators and timing info
+pub fn created_a_total_of(nb: u64, size: u8, version: &str, elapsed_secs: f64) {
+    let hours = (elapsed_secs / 3600.0) as u64;
+    let minutes = ((elapsed_secs % 3600.0) / 60.0) as u64;
+    let seconds = (elapsed_secs % 60.0) as u64;
+    
+    test_print(&format!("   ... {} created a total of {:>15} no-set-{:02} lists in {:>10.2} seconds ({:02}h{:02}m{:02}s)", 
+            version, nb.separated_string(), size, elapsed_secs, hours, minutes, seconds));
 }
 
 /// Generate filename for NoSetList files (.nsl extension)

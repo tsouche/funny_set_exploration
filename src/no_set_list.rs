@@ -230,8 +230,7 @@ impl Default for NoSetList {
     }
 }
 
-// Conversion between NoSetList and NList for migration/compatibility
-#[cfg(feature = "nlist_compat")]
+// Conversion between NoSetList and NList for hybrid v0.3.1 strategy
 impl NoSetList {
     /// Convert from heap-based NList to stack-based NoSetList
     pub fn from_nlist(nlist: &crate::nlist::NList) -> Self {
@@ -243,7 +242,11 @@ impl NoSetList {
         )
     }
     
-    /// Convert to heap-based NList (for backward compatibility)
+    /// Convert to heap-based NList for I/O operations
+    /// 
+    /// This enables hybrid v0.3.1 strategy:
+    /// - Use NoSetList (stack) for fast computation
+    /// - Convert to NList (heap) for compact serialization
     pub fn to_nlist(&self) -> crate::nlist::NList {
         crate::nlist::NList {
             size: self.size,

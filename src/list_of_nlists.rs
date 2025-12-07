@@ -42,6 +42,10 @@ pub struct ListOfNlist {
     pub new_list_count: u64,       // number of new n-lists created so far
     #[serde(skip)]
     pub base_path: String,         // base directory for saving/loading files
+    #[serde(skip)]
+    pub computation_time: f64,     // time spent in core algorithm
+    #[serde(skip)]
+    pub file_io_time: f64,         // time spent in file I/O operations
 }
 
 impl ListOfNlist {
@@ -65,6 +69,8 @@ impl ListOfNlist {
             new_file_count: 0,
             new_list_count: 0,
             base_path: String::from("."),
+            computation_time: 0.0,
+            file_io_time: 0.0,
         }
     }
 
@@ -85,6 +91,8 @@ impl ListOfNlist {
             new_file_count: 0,
             new_list_count: 0,
             base_path: String::from(base_path),
+            computation_time: 0.0,
+            file_io_time: 0.0,
         }
     }
 
@@ -103,6 +111,9 @@ impl ListOfNlist {
     ///       max card index 65 (i.e. one will need to complement the 3 cards with
     ///       at least 15 more cards to get to 18).
     pub fn create_seed_lists(&mut self) {
+        // Start timing
+        let start_time = std::time::Instant::now();
+        
         // set the fields with initial values
         self.current_size = 3;          // we handle list of 3 cards
         self.current.clear();           // clear existing current n-lists
@@ -142,7 +153,6 @@ impl ListOfNlist {
         self.current_list_count = self.current.len() as u64;
 
         // done with creating all seed-lists: save them to file
-        created_a_total_of(self.current_list_count, 3);
         let file = filename(&self.base_path, 3, 0);
         match save_to_file(&self.current, &file) {
             true => debug_print(&format!("create_seed_lists:   ... saved {} seed \
@@ -150,6 +160,12 @@ impl ListOfNlist {
             false => debug_print(&format!("create_seed_lists: Error saving \
                         seed lists to file {}", file)),
         }
+        
+        // Report completion with timing
+        let elapsed = start_time.elapsed();
+        let elapsed_secs = elapsed.as_secs_f64();
+        created_a_total_of(self.current_list_count, 3, "v0.2.2", elapsed_secs);
+        
         // now clear the current list to make room for processing higher n-lists
         self.current.clear();
         self.current_list_count = 0;
@@ -169,9 +185,15 @@ impl ListOfNlist {
     fn refill_current_from_file(&mut self) -> bool {
         // build the right file name
         let filename = filename(&self.base_path, self.current_size, self.current_file_count);
+        
+        // Time the file read operation
+        let io_start = std::time::Instant::now();
+        
         // try reading the file
         match read_from_file(&filename) {
             Some(vec_nlist) => {
+                self.file_io_time += io_start.elapsed().as_secs_f64();
+                
                 // successfully read the current vector from file: add the 
                 // n-lists to the current vector
                 let add_len = vec_nlist.len();
@@ -186,6 +208,7 @@ impl ListOfNlist {
                 return true;
             },
             None => {
+                self.file_io_time += io_start.elapsed().as_secs_f64();
                 // error reading from file
                 debug_print(&format!("refill_current_from_file: Error loading \
                     n-lists from file {}", filename));
@@ -204,9 +227,14 @@ impl ListOfNlist {
         // get the number of new n-lists to be saved
         let additional_new = self.new.len() as u64;
 
+        // Time the file write operation
+        let io_start = std::time::Instant::now();
+        
         // try saving the new vector to file
         match save_to_file(&self.new, &file) {
             true => {
+                self.file_io_time += io_start.elapsed().as_secs_f64();
+                
                 // the new vector has been saved successfully to file
                 self.new_list_count += additional_new;
                 self.new_file_count += 1;
@@ -216,6 +244,7 @@ impl ListOfNlist {
                 return true;
             },
             false => {
+                self.file_io_time += io_start.elapsed().as_secs_f64();
                 // error saving to file
                 debug_print(&format!("save_new_to_file: Error saving new list \
                     to file {}", file));
@@ -243,8 +272,13 @@ impl ListOfNlist {
             debug_print_noln(&format!("{:>5} ", len - i));
             // pop the first current n-list from the vector
             let current_nlist = self.current.pop().unwrap();
+            
+            // Time the core computation
+            let comp_start = std::time::Instant::now();
             // build the new n-lists from the current n-list
             let new_nlists = current_nlist.build_higher_nlists();
+            self.computation_time += comp_start.elapsed().as_secs_f64();
+            
             debug_print_noln(&format!("-> +{:>5} new - ", new_nlists.len()));
             // add the newly created n-lists to the new vector
             self.new.extend(new_nlists);
@@ -284,6 +318,13 @@ impl ListOfNlist {
             return 0;
         }
         debug_print(&format!("process_all_files_of_current_size_n: start processing files with no-set size {:02}", current_size));
+
+        // Start timing
+        let start_time = std::time::Instant::now();
+        
+        // Reset timing counters
+        self.computation_time = 0.0;
+        self.file_io_time = 0.0;
 
         // set all parameters to initial values
         self.current_size = current_size; // we process lists of size n-1 to build lists of size n
@@ -326,16 +367,34 @@ impl ListOfNlist {
             }
         }
         // this is done
+        let elapsed = start_time.elapsed();
+        let elapsed_secs = elapsed.as_secs_f64();
+        let overhead = elapsed_secs - self.computation_time - self.file_io_time;
+        
         debug_print(&format!("process_all_files_of_current_size_n: Finished processing all files for size {:02}", 
             self.current_size));
+        
+        // Report total with breakdown
+        created_a_total_of(self.new_list_count, self.current_size + 1, 
+            "v0.2.2", elapsed_secs);
+        test_print(&format!("   ... timing breakdown: computation {:.2}s \
+            ({:.1}%), file I/O {:.2}s ({:.1}%), overhead {:.2}s ({:.1}%)\n",
+            self.computation_time, (self.computation_time / elapsed_secs * 100.0),
+            self.file_io_time, (self.file_io_time / elapsed_secs * 100.0),
+            overhead, (overhead / elapsed_secs * 100.0)));
+        
         return self.new_list_count;
     }
 }
 
-/// helper to properly print a large number of n-lists
-pub fn created_a_total_of(nb: u64, size: u8) {
-    test_print(&format!("   ... created a total of {:>15} no-set-{:02} lists", 
-            nb.separated_string(), size));
+/// helper to properly print a large number of n-lists with timing info
+pub fn created_a_total_of(nb: u64, size: u8, version: &str, elapsed_secs: f64) {
+    let hours = (elapsed_secs / 3600.0) as u64;
+    let minutes = ((elapsed_secs % 3600.0) / 60.0) as u64;
+    let seconds = (elapsed_secs % 60.0) as u64;
+    
+    test_print(&format!("   ... {} created a total of {:>15} no-set-{:02} lists in {:>10.2} seconds ({:02}h{:02}m{:02}s)", 
+            version, nb.separated_string(), size, elapsed_secs, hours, minutes, seconds));
 }
 
 /// Generate a filename for a given n-list size and batch number

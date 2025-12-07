@@ -30,6 +30,7 @@ mod list_of_nlists;
 mod list_of_nsl;
 
 use clap::Parser;
+use separator::Separatable;
 use crate::utils::*;
 
 /// CLI arguments structure
@@ -63,15 +64,18 @@ fn main() {
     // Parse command-line arguments
     let args = Args::parse();
 
-    /// Max number of n-list saved per file
-    ///     - I usually set it at 20 millions.
-    ///     - With rkyv: each file will be about 1.9GB (down from 3.2GB with 
-    ///       bincode)
-    ///     - Peak RAM usage: ~10.5GB (down from ~13.5GB with bincode)
-    ///     - Files are saved as .rkyv format (memory-mapped, zero-copy)
-    ///     - Old .bin files (bincode) are still readable for backward 
-    ///       compatibility
-    const MAX_NLISTS_PER_FILE: u64 = 20_000_000;
+    /// Max number of n-list saved per file for v0.2.2
+    /// - Each NList: ~100 bytes average (dynamic Vec)
+    /// - 20M entries × 100 bytes = ~2GB per file
+    /// - Peak RAM during save: ~10.5GB (vec + archive + overhead)
+    const MAX_NLISTS_PER_FILE_V2: u64 = 20_000_000;
+    
+    /// Max number of n-list saved per file for v0.3.0
+    /// - Each NoSetList: 792 bytes (fixed arrays)
+    /// - 20M entries × 792 bytes = ~15GB per file
+    /// - Peak RAM during save: ~22-24GB (vec + archive + overhead)
+    /// - Trade-off: Fewer files vs higher RAM usage
+    const MAX_NLISTS_PER_FILE_V3: u64 = 20_000_000;
 
     debug_print_on();
     debug_print_off();
@@ -80,15 +84,15 @@ fn main() {
 
     // Dispatch to appropriate version
     match args.version {
-        2 => run_version_2(args.size, args.output_path, MAX_NLISTS_PER_FILE),
-        3 => run_version_3(args.size, args.output_path, MAX_NLISTS_PER_FILE),
+        2 => run_version_2(args.size, args.output_path, MAX_NLISTS_PER_FILE_V2),
+        3 => run_version_3(args.size, args.output_path, MAX_NLISTS_PER_FILE_V3),
         _ => unreachable!("clap should prevent other values"),
     }
 }
 
 /// Run version 0.2.2 (heap-based with Vec)
 fn run_version_2(size: Option<u8>, output_path: Option<String>, max_per_file: u64) {
-    use crate::list_of_nlists::{ListOfNlist, created_a_total_of};
+    use crate::list_of_nlists::ListOfNlist;
 
     banner("Funny Set Exploration - v0.2.2 (Heap-Based)");
     
@@ -123,12 +127,11 @@ fn run_version_2(size: Option<u8>, output_path: Option<String>, max_per_file: u6
         test_print(&format!("Processing files nlist_{:02}_batch_*.rkyv to create no-set-lists of size {}:", 
             source_size, target_size));
         
-        let nb_new = no_set_lists.process_all_files_of_current_size_n(
+        let _nb_new = no_set_lists.process_all_files_of_current_size_n(
             source_size, 
             &max_per_file
         );
         
-        created_a_total_of(nb_new, target_size);
         test_print(&format!("\nCompleted! Generated files: nlist_{:02}_batch_*.rkyv", target_size));
     } else {
         // =====================================================================
@@ -136,8 +139,8 @@ fn run_version_2(size: Option<u8>, output_path: Option<String>, max_per_file: u6
         // =====================================================================
         test_print("   - will create         58.896 no-set-lists with  3 cards");
         test_print("   - will create      1.004.589 no-set-lists with  4 cards");
-        test_print("   - will create     13.394.538 no-set-lists with  5 cards");
-        test_print("   - will create    141.370.218 no-set-lists with  6 cards");
+        test_print("   - will create     14.399.538 no-set-lists with  5 cards");
+        test_print("   - will create    155.769.345 no-set-lists with  6 cards");
         test_print("   - will create  1.180.345.041 no-set-lists with  7 cards");
         test_print("   - will create  7.920.450.378 no-set-lists with  8 cards");
         test_print("\n======================\n");
@@ -157,16 +160,15 @@ fn run_version_2(size: Option<u8>, output_path: Option<String>, max_per_file: u6
         //for size in 9..12 {
             test_print(&format!("Start processing the files to create no-set-lists \
                 of size {}:", size+1));
-            let nb_new = no_set_lists.process_all_files_of_current_size_n(size, 
+            let _nb_new = no_set_lists.process_all_files_of_current_size_n(size, 
                 &max_per_file);
-            created_a_total_of(nb_new, size+1);
         }
     }
 }
 
 /// Run version 0.3.0 (stack-optimized with arrays)
 fn run_version_3(size: Option<u8>, output_path: Option<String>, max_per_file: u64) {
-    use crate::list_of_nsl::{ListOfNSL, created_a_total_of};
+    use crate::list_of_nsl::ListOfNSL;
 
     banner("Funny Set Exploration - v0.3.0 (Stack-Optimized)");
     
@@ -176,6 +178,7 @@ fn run_version_3(size: Option<u8>, output_path: Option<String>, max_per_file: u6
         // =====================================================================
         test_print(&format!("v0.3.0 CLI Mode: Target size = {} cards", target_size));
         test_print("Using STACK-OPTIMIZED algorithm (zero heap allocations, 3-8x faster)");
+        test_print(&format!("Batch size: {} entries/file (~15GB)", max_per_file.separated_string()));
         
         if let Some(ref path) = output_path {
             test_print(&format!("Output directory: {}", path));
@@ -202,12 +205,11 @@ fn run_version_3(size: Option<u8>, output_path: Option<String>, max_per_file: u6
         test_print(&format!("Processing files nlist_{:02}_batch_*.nsl to create no-set-lists of size {}:", 
             source_size, target_size));
         
-        let nb_new = no_set_lists.process_all_files_of_current_size_n(
+        let _nb_new = no_set_lists.process_all_files_of_current_size_n(
             source_size, 
             &max_per_file
         );
         
-        created_a_total_of(nb_new, target_size);
         test_print(&format!("\nCompleted! Generated files: nlist_{:02}_batch_*.nsl", target_size));
     } else {
         // =====================================================================
@@ -235,10 +237,8 @@ fn run_version_3(size: Option<u8>, output_path: Option<String>, max_per_file: u6
         // Expand from seed_lists to NoSetList of size 4, 5, 6...
         for size in 3..6 {
             test_print(&format!("\nStart processing files to create no-set-lists of size {}:", size+1));
-            test_print("Using STACK-OPTIMIZED algorithm (zero heap allocations in core loop)");
-            let nb_new = no_set_lists.process_all_files_of_current_size_n(size, 
+            let _nb_new = no_set_lists.process_all_files_of_current_size_n(size, 
                 &max_per_file);
-            created_a_total_of(nb_new, size+1);
         }
     }
 }
