@@ -24,7 +24,7 @@ use crate::set::*;
 use crate::no_set_list::*;
 
 /// Batch processor: NoSetList for compute, NoSetListSerialized for I/O
-pub struct ListOfNlist {
+pub struct ListOfNSL {
     pub current_size: u8,          // # of cards in the current no-set-lists
     pub current: Vec<NoSetList>,   // current n-lists (stack-based for computation)
     pub current_file_count: u16,   // number of current file being processed
@@ -38,8 +38,8 @@ pub struct ListOfNlist {
     pub conversion_time: f64,      // time spent converting between formats
 }
 
-impl ListOfNlist {
-    /// Creates a new, empty ListOfNSLHybrid with default directory (".")
+impl ListOfNSL {
+    /// Creates a new, empty ListOfNSL with default directory (".")
     pub fn new() -> Self {
         Self {
             current_size: 0,
@@ -375,7 +375,7 @@ impl ListOfNlist {
     }
 }
 
-impl Default for ListOfNlist {
+impl Default for ListOfNSL {
     fn default() -> Self {
         Self::new()
     }

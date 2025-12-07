@@ -259,62 +259,6 @@ pub struct NoSetListSerialized {
     pub remaining_cards_list: Vec<usize>,
 }
 
-impl NoSetListSerialized {
-    /// LEGACY METHOD: Return a list of n+1-no_set_lists (unused in v0.3.2)
-    /// 
-    /// This method is from v0.2.2 and is NOT used in v0.3.2.
-    /// v0.3.2 uses NoSetList.build_higher_nsl() instead for 4-5× performance.
-    /// 
-    /// Kept for backward compatibility and historical reference.
-    pub fn build_higher_nlists(&self) -> Vec<NoSetListSerialized> {
-        let mut result: Vec<NoSetListSerialized> = vec![];
-        let rcl_len = self.remaining_cards_list.len();
-        let max_card = self.max_card;
-        for i in 0..rcl_len {
-            // Check if the new card is larger than max_card in current no_set_list
-            let card = self.remaining_cards_list[i];
-            if card <= max_card {
-                continue;
-            }
-            // Check if the new card forms a set with any 2 cards in current no_set_list
-            let mut ok = true;
-            for j in 0..self.no_set_list.len() - 1 {
-                if !ok {
-                    break;
-                }
-                for k in j + 1..self.no_set_list.len() {
-                    let card1 = self.no_set_list[j];
-                    let card2 = self.no_set_list[k];
-                    if is_set(card1, card2, card) {
-                        ok = false;
-                        break;
-                    }
-                }
-            }
-            if ok {
-                // The new card 'card' can be added to current no_set_list to form a
-                // higher n+1-no_set_list
-                let mut new_nsl = self.no_set_list.clone();
-                new_nsl.push(card);
-                let new_rcl: Vec<usize> = self.remaining_cards_list[i + 1..]
-                    .iter()
-                    .filter(|&&c| c > card)
-                    .map(|&c| c)
-                    .collect();
-                let new_max_card = *new_nsl.iter().max().unwrap_or(&0);
-                let higher_nlist = NoSetListSerialized {
-                    n: self.n + 1,
-                    max_card: new_max_card,
-                    no_set_list: new_nsl,
-                    remaining_cards_list: new_rcl,
-                };
-                result.push(higher_nlist);
-            }
-        }
-        result
-    }
-}
-
 // Conversion between NoSetList and NoSetListSerialized for hybrid v0.3.2 strategy
 impl NoSetList {
     /// Convert from heap-based NoSetListSerialized to stack-based NoSetList

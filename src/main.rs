@@ -22,7 +22,7 @@
 mod utils;
 mod set;
 mod no_set_list;
-mod list_of_nlists;
+mod list_of_nsl;
 
 use clap::Parser;
 use separator::Separatable;
@@ -117,7 +117,7 @@ fn main() {
         None
     };
 
-    use crate::list_of_nlists::ListOfNlist;
+    use crate::list_of_nsl::ListOfNSL;
 
     banner("Funny Set Exploration)");
     
@@ -140,10 +140,10 @@ fn main() {
         }
         test_print("\n======================\n");
 
-        // Initialize ListOfNlist with optional custom path
-        let mut no_set_lists: ListOfNlist = match args.output_path {
-            Some(path) => ListOfNlist::with_path(&path),
-            None => ListOfNlist::new(),
+        // Initialize ListOfNSL with optional custom path
+        let mut no_set_lists: ListOfNSL = match args.output_path {
+            Some(path) => ListOfNSL::with_path(&path),
+            None => ListOfNSL::new(),
         };
 
         // Handle size 4: need to create seed lists first
@@ -189,9 +189,9 @@ fn main() {
         test_print("\n======================\n");
 
         // Initialize with output path if provided
-        let mut no_set_lists: ListOfNlist = match args.output_path {
-            Some(path) => ListOfNlist::with_path(&path),
-            None => ListOfNlist::with_path(r"T:\data\funny_set_exploration"),
+        let mut no_set_lists: ListOfNSL = match args.output_path {
+            Some(path) => ListOfNSL::with_path(&path),
+            None => ListOfNSL::with_path(r"T:\data\funny_set_exploration"),
         };
 
         // Create all seed lists
