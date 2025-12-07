@@ -2,16 +2,16 @@
 
 ## Overview
 
-The program now supports both **default mode** and **CLI mode** for flexible operation.
+Version 0.3.2 uses a simplified CLI with optional size and output-path arguments. The program uses a hybrid stack/heap implementation for optimal performance.
 
 ## Running the Program
 
 ### Default Mode (No Arguments)
 
-Runs the original behavior: creates seed lists and processes sizes 4-6.
+Runs the default behavior: creates seed lists and processes sizes 4-6.
 
 ```powershell
-cargo run
+cargo run --release
 ```
 
 This will:
@@ -21,19 +21,34 @@ This will:
 3. Generate size 5 from size 4
 4. Generate size 6 from size 5
 
-### CLI Mode (With --size Argument)
+### CLI Mode: Single Size
 
 Process a specific size only.
 
 ```powershell
 # Build size 5 from existing size 4 files
-cargo run -- --size 5
+cargo run --release -- --size 5
 
 # Build size 4 (will create seed lists first if needed)
-cargo run -- --size 4
+cargo run --release -- --size 4
 
 # Build size 7 from existing size 6 files
-cargo run -- --size 7
+cargo run --release -- --size 7
+```
+
+### CLI Mode: Size Range (v0.3.2+)
+
+Process multiple sizes in a single run:
+
+```powershell
+# Build sizes 5, 6, and 7 sequentially
+cargo run --release -- --size 5-7
+
+# Build sizes 8 through 10
+cargo run --release -- --size 8-10
+
+# Extended range (up to size 18)
+cargo run --release -- --size 10-12
 ```
 
 ### Custom Output Directory
@@ -42,13 +57,40 @@ You can specify a custom output directory with `-o` or `--output-path`:
 
 ```powershell
 # Windows: Use NAS drive
-cargo run -- --size 5 -o "T:\data\funny_set_exploration"
+cargo run --release -- --size 7 -o "T:\data\funny_set_exploration"
 
 # Linux: Use mounted NAS
-cargo run -- --size 5 -o "/mnt/nas/data/funny_set_exploration"
+cargo run --release -- --size 7 -o "/mnt/nas/data/funny_set_exploration"
 
 # Relative path
-cargo run -- --size 5 -o "./output"
+cargo run --release -- --size 5-7 -o "./output"
+```
+
+## Command-Line Options
+
+```
+funny_set_exploration [OPTIONS]
+
+Options:
+  -s, --size <SIZE>
+          Target size to build (4-18 or range like 5-7)
+          
+          If not provided, runs the default behavior (creates seeds + sizes 4-6)
+          - Single size: "5" builds size 5 from size 4 files
+          - Range: "5-7" builds sizes 5, 6, and 7 sequentially
+          - Size 4: Builds from seed lists (size 3)
+          - Size 5+: Requires files from previous size
+
+  -o, --output-path <OUTPUT_PATH>
+          Output directory path (optional)
+          
+          Examples:
+            Windows: T:\data\funny_set_exploration
+            Linux:   /mnt/nas/data/funny_set_exploration
+            Relative: ./output
+
+  -h, --help
+          Print help
 ```
 
 ## Prerequisites

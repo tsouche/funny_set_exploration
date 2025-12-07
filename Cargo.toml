@@ -1,6 +1,6 @@
 [package]
 name = "funny_set_exploration"
-version = "0.2.2"
+version = "0.3.2"
 edition = "2024"
 
 [dependencies]
@@ -16,6 +16,9 @@ bincode = "1.3"
 
 # CLI argument parsing
 clap = { version = "4.5", features = ["derive"] }
+
+# Date/time for log file naming
+chrono = "0.4"
 
 # Utility dependencies
 separator = "0.4"

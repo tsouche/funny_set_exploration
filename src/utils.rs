@@ -16,10 +16,46 @@
 
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+use std::fs::OpenOptions;
+use std::io::Write;
 
 // turn this constant to 'true' to print multiple debug messages
 static DEBUG_FLAG: AtomicBool = AtomicBool::new(true);
 static TEST_FLAG: AtomicBool = AtomicBool::new(true);
+
+// Global log file handle (wrapped in Mutex for thread safety)
+static LOG_FILE: Mutex<Option<std::fs::File>> = Mutex::new(None);
+
+/// Initialize log file with timestamp
+pub fn init_log_file() {
+	let now = chrono::Local::now();
+	let filename = format!("log_funny_{}.txt", now.format("%Y-%m-%d_%H-%M-%S"));
+	
+	match OpenOptions::new()
+		.create(true)
+		.write(true)
+		.truncate(true)
+		.open(&filename)
+	{
+		Ok(file) => {
+			*LOG_FILE.lock().unwrap() = Some(file);
+			eprintln!("Log file created: {}", filename);
+		},
+		Err(e) => {
+			eprintln!("Warning: Could not create log file {}: {}", filename, e);
+		}
+	}
+}
+
+/// Write to log file if it's open
+fn write_to_log(msg: &str) {
+	if let Ok(mut log_guard) = LOG_FILE.lock() {
+		if let Some(ref mut file) = *log_guard {
+			let _ = writeln!(file, "{}", msg);
+		}
+	}
+}
 
 pub fn debug_print_on() {
 	DEBUG_FLAG.store(true, Ordering::Relaxed);
@@ -54,6 +90,8 @@ pub fn test_print(msg:&str) {
 	if TEST_FLAG.load(Ordering::Relaxed) {
         eprintln!("{}", msg.to_string());
 	}
+	// Always write to log file if it's open
+	write_to_log(msg);
 }
 
 pub fn banner(msg:&str) {
@@ -76,7 +114,7 @@ pub fn banner(msg:&str) {
 	let right_spaces = " ".repeat(right_padding);
 	let banner_str = format!("\n\n{}\n{}{}{}\n{}\n\n",
 		line, left_spaces, titre, right_spaces, line);
-	// Display the banner
+	// Display the banner (also writes to log)
 	test_print(&banner_str);
 }
 

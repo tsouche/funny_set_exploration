@@ -1,17 +1,15 @@
-/// This module enable to manage lists of 'n-list', i.e. a vector of NList structures
+/// Version 0.3.2: Hybrid stack-optimized computation with heap-based I/O
 /// 
-/// Each NList structure represents a combination of n cards, represented by
-/// their indices in the full deck of 81 cards (from 0 to 80), such that:
-///     - within which no valid set can be found
-///     - with the corresponding list of 'remaining cards' that can be added to 
-///       the n-sized combinations without creating a valid set
+/// This implementation combines the best of both worlds:
+/// - Uses NoSetList (stack arrays) for computation → 4-5× faster
+/// - Converts to NoSetListSerialized (heap Vecs) for I/O → compact 2GB files
 /// 
-/// The methods provided here are used to build such lists of NLists 
-/// incrementally, starting from no-set-03 combinations, then no-set-04, 
-/// no-set-05, etc...
-/// 
-/// The main function is `build_n+1_set()` which builds the list of all possible
-/// no-set-n+1 from a given no-set-n list.
+/// Performance characteristics:
+/// - Computation: Same speed as v0.3.0 (stack-optimized)
+/// - File size: ~2GB per 20M batch (compact with size_32 rkyv)
+/// - Memory: Moderate (~12-15GB peak during conversion + save)
+///
+/// This is the only active version of the project.
 
 use std::fs::File;
 
@@ -20,47 +18,30 @@ use rkyv::check_archived_root;
 use rkyv::Deserialize as RkyvDeserializeTrait;
 use memmap2::Mmap;
 
-// Keep serde and bincode for backward compatibility
-use serde::{Serialize, Deserialize};
-
 use separator::Separatable;
 use crate::utils::*;
 use crate::set::*;
-use crate::nlist::*;
+use crate::no_set_list::*;
 
-/// A structure to hold a list of NList structures, with the ability to save to
-/// file the n+1-lists built from a given n-list, per batch of 
-/// MAX_NLISTS_PER_FILE, and to load a batch of n-lists from a given file.
-#[derive(Serialize, Deserialize)]
+/// Batch processor: NoSetList for compute, NoSetListSerialized for I/O
 pub struct ListOfNlist {
-    pub current_size: u8,          // # of card in the current nlists
-    pub current: Vec<NList>,       // the current n-lists being processed
-    pub current_file_count: u16,   // number of the current file being processed
+    pub current_size: u8,          // # of cards in the current no-set-lists
+    pub current: Vec<NoSetList>,   // current n-lists (stack-based for computation)
+    pub current_file_count: u16,   // number of current file being processed
     pub current_list_count: u64,   // number of current n-lists processed so far
-    pub new: Vec<NList>,           // the newly created n+1-lists
+    pub new: Vec<NoSetList>,       // newly created n+1-lists (stack-based during compute)
     pub new_file_count: u16,       // number of files saved so far
     pub new_list_count: u64,       // number of new n-lists created so far
-    #[serde(skip)]
     pub base_path: String,         // base directory for saving/loading files
-    #[serde(skip)]
     pub computation_time: f64,     // time spent in core algorithm
-    #[serde(skip)]
     pub file_io_time: f64,         // time spent in file I/O operations
+    pub conversion_time: f64,      // time spent converting between formats
 }
 
 impl ListOfNlist {
-
-    /// Creates a new, empty ListOfNlist with n indicating the size of the
-    /// current n-lists
-    /// 
-    /// # Arguments
-    /// * `base_path` - Optional base directory path for saving/loading files.
-    ///                 If None, uses current directory (".").
-    ///                 Examples:
-    ///                 - Windows: r"T:\data\funny_set_exploration"
-    ///                 - Linux: "/mnt/nas/data/funny_set_exploration"
+    /// Creates a new, empty ListOfNSLHybrid with default directory (".")
     pub fn new() -> Self {
-        return Self {
+        Self {
             current_size: 0,
             current: Vec::new(),
             current_file_count: 0,
@@ -71,18 +52,13 @@ impl ListOfNlist {
             base_path: String::from("."),
             computation_time: 0.0,
             file_io_time: 0.0,
+            conversion_time: 0.0,
         }
     }
-
-    /// Creates a new ListOfNlist with a custom base path
-    /// 
-    /// # Arguments
-    /// * `base_path` - Base directory path for saving/loading files
-    ///                 Examples:
-    ///                 - Windows: r"T:\data\funny_set_exploration"
-    ///                 - Linux: "/mnt/nas/data/funny_set_exploration"
+    
+    /// Creates a new ListOfNSLHybrid with a custom base path
     pub fn with_path(base_path: &str) -> Self {
-        return Self {
+        Self {
             current_size: 0,
             current: Vec::new(),
             current_file_count: 0,
@@ -93,448 +69,376 @@ impl ListOfNlist {
             base_path: String::from(base_path),
             computation_time: 0.0,
             file_io_time: 0.0,
+            conversion_time: 0.0,
         }
     }
-
-    /// Build the list of all possible no-set-03 combinations, i.e. combinations of 
-    /// 3 cards within which no valid set can be found, with their corresponding 
-    /// remaining cards list.
-    /// 
-    /// NB:
-    ///     - knowing that we will need to have at least 12 cards on the table 
-    ///       eventually, we limit the max card index to 72 (i.e. one will need to 
-    ///       complement the 3 cards with at least 9 more coards to get to 12).
-    ///     - if we want to focus on the no-set-table with 15 cards, we may stop at
-    ///       max card index 68 (i.e. one will need to complement the 3 cards with
-    ///       at least 12 more cards to get to 15).
-    ///     - if we want to focus on the no-set-table with 18 cards, we may stop at
-    ///       max card index 65 (i.e. one will need to complement the 3 cards with
-    ///       at least 15 more cards to get to 18).
+    
+    /// Build all possible no-set-03 combinations using stack allocation
     pub fn create_seed_lists(&mut self) {
         // Start timing
         let start_time = std::time::Instant::now();
         
-        // set the fields with initial values
-        self.current_size = 3;          // we handle list of 3 cards
-        self.current.clear();           // clear existing current n-lists
-        self.current_file_count = 0;    // reset current file count
-        self.current_list_count = 0;    // reset current list count
-        self.new.clear();               // clear existing new n-lists
-        self.new_file_count = 0;        // reset new file count
-        self.new_list_count = 0;        // reset new list count
-        // create the no-set-03 combinations (i < 70 to get to at least 12 cards)
+        // Initialize fields
+        self.current_size = 3;
+        self.current.clear();
+        self.current_file_count = 0;
+        self.current_list_count = 0;
+        self.new.clear();
+        self.new_file_count = 0;
+        self.new_list_count = 0;
+        
+        // Create no-set-03 combinations (i < 70 to reach at least 12 cards)
         for i in 0..70 {
             for j in (i + 1)..71 {
                 for k in (j + 1)..72 {
-                    // (i,j,k) is a candidate for a no-set-03 combination
-                    let table = vec![i, j, k];
+                    // Check if (i,j,k) forms a set
                     if !is_set(i, j, k) {
-                        // (i,j,k) is a no-set-03 combination
-                        // build a 'remaining list' with all the possible values strictly greater than k
-                        let mut remaining_cards: Vec<usize> = (k + 1..81).collect();
-                        // remove from this list all cards that would create a set
-                        // with any pair of cards in the current table
-                        let c1 = next_to_set(i, j);
-                        let c2 = next_to_set(i, k);
-                        let c3 = next_to_set(j, k);
-                        remaining_cards.retain(|&x| x != c1 && x != c2 && x != c3);
-                        // store the resulting n-list
-                        let nlist = NList {
-                            n: 3,
+                        // Build seed list on stack
+                        let mut no_set_array = [0usize; 18];
+                        no_set_array[0] = i;
+                        no_set_array[1] = j;
+                        no_set_array[2] = k;
+                        
+                        // Remaining cards: stack array with filtering
+                        let mut remaining_array = [0usize; 78];
+                        let mut remaining_len = 0u8;
+                        
+                        // Add all cards > k
+                        for card in (k + 1)..81 {
+                            remaining_array[remaining_len as usize] = card;
+                            remaining_len += 1;
+                        }
+                        
+                        // Remove forbidden cards
+                        let forbidden = [
+                            next_to_set(i, j),
+                            next_to_set(i, k),
+                            next_to_set(j, k),
+                        ];
+                        
+                        for &f in &forbidden {
+                            let mut idx = 0u8;
+                            while idx < remaining_len {
+                                if remaining_array[idx as usize] == f {
+                                    // Shift left to remove
+                                    for m in idx..remaining_len - 1 {
+                                        remaining_array[m as usize] = remaining_array[(m + 1) as usize];
+                                    }
+                                    remaining_len -= 1;
+                                    break;
+                                }
+                                idx += 1;
+                            }
+                        }
+                        
+                        // Create NoSetList (stack-allocated)
+                        let nsl = NoSetList {
+                            size: 3,
                             max_card: k,
-                            no_set_list: table,
-                            remaining_cards_list: remaining_cards,
+                            no_set_list: no_set_array,
+                            no_set_list_len: 3,
+                            remaining_cards_list: remaining_array,
+                            remaining_cards_list_len: remaining_len,
                         };
-                        self.current.push(nlist);
+                        
+                        self.current.push(nsl);
                     }
                 }
             }
         }
+        
         self.current_list_count = self.current.len() as u64;
         
+        // Convert to NoSetListSerialized and save (hybrid I/O)
+        let conv_start = std::time::Instant::now();
+        let nlists: Vec<NoSetListSerialized> = self.current.iter().map(|nsl| nsl.to_serialized()).collect();
+        self.conversion_time += conv_start.elapsed().as_secs_f64();
+        
         // Clone to fresh Vecs to eliminate capacity bloat
-        let compacted: Vec<NList> = self.current.iter().map(|nlist| NList {
+        let compacted: Vec<NoSetListSerialized> = nlists.iter().map(|nlist| NoSetListSerialized {
             n: nlist.n,
             max_card: nlist.max_card,
             no_set_list: nlist.no_set_list.iter().copied().collect(),
             remaining_cards_list: nlist.remaining_cards_list.iter().copied().collect(),
         }).collect();
         
-        // done with creating all seed-lists: save them to file
         let file = filename(&self.base_path, 3, 0);
-        match save_to_file(&compacted, &file) {
-            true => debug_print(&format!("create_seed_lists:   ... saved {} seed \
-                        lists to {}", self.current_list_count, file)),
-            false => debug_print(&format!("create_seed_lists: Error saving \
-                        seed lists to file {}", file)),
+        
+        let io_start = std::time::Instant::now();
+        match save_to_file_serialized(&compacted, &file) {
+            true => debug_print(&format!("create_seed_lists: saved {} seed lists to {}", 
+                self.current_list_count, file)),
+            false => debug_print(&format!("create_seed_lists: Error saving seed lists to {}", 
+                file)),
         }
+        self.file_io_time = io_start.elapsed().as_secs_f64();
         
         // Report completion with timing
         let elapsed = start_time.elapsed();
         let elapsed_secs = elapsed.as_secs_f64();
-        created_a_total_of(self.current_list_count, 3, "v0.2.2", elapsed_secs);
+        created_a_total_of(self.current_list_count, 3, elapsed_secs);
         
-        // now clear the current list to make room for processing higher n-lists
+        // Clear current list to make room for processing
         self.current.clear();
         self.current_list_count = 0;
     }
-
-    /// Load a batch of current n-lists from a given file and populate the 
-    /// current list with it.
-    /// 
-    /// Typical usage: when the current list has been fully processed and we
-    /// want to load the next batch of n-lists (of the same size or not) to 
-    /// continue the process.
-    /// 
-    /// Arguments
-    ///     - size: number of card in the current list
-    ///     - number of the batch file to load
-    /// Returns true on success, false on failure
+    
+    /// Load a batch of current n-lists from file (reads NoSetListSerialized, converts to NoSetList)
     fn refill_current_from_file(&mut self) -> bool {
-        // build the right file name
         let filename = filename(&self.base_path, self.current_size, self.current_file_count);
         
         // Time the file read operation
         let io_start = std::time::Instant::now();
         
-        // try reading the file
-        match read_from_file(&filename) {
+        let result = read_from_file_serialized(&filename);
+        self.file_io_time += io_start.elapsed().as_secs_f64();
+        
+        match result {
             Some(vec_nlist) => {
-                self.file_io_time += io_start.elapsed().as_secs_f64();
+                // Convert from NoSetListSerialized to NoSetList for fast computation
+                let conv_start = std::time::Instant::now();
+                let vec_nsl: Vec<NoSetList> = vec_nlist.iter()
+                    .map(|nl| NoSetList::from_serialized(nl))
+                    .collect();
+                self.conversion_time += conv_start.elapsed().as_secs_f64();
                 
-                // successfully read the current vector from file: add the 
-                // n-lists to the current vector
-                let add_len = vec_nlist.len();
-                self.current.extend(vec_nlist);
-                self.current_list_count += self.current.len() as u64;
+                let add_len = vec_nsl.len();
+                self.current.extend(vec_nsl);
+                self.current_list_count += add_len as u64;
                 self.current_file_count += 1;
-                debug_print(&format!("refill_current_from_file:   ... added {} \
-                    current n-lists from {} => total current n-list now {}, \
-                    current file count = {}, new file count = {}", add_len, 
-                    filename, self.current_list_count, self.current_file_count, 
-                    self.new_file_count));
-                return true;
-            },
+                debug_print(&format!("refill_current_from_file: added {} n-lists from {} \
+                    (total: {}, files: {})", add_len, filename, self.current_list_count, 
+                    self.current_file_count));
+                true
+            }
             None => {
-                self.file_io_time += io_start.elapsed().as_secs_f64();
-                // error reading from file
-                debug_print(&format!("refill_current_from_file: Error loading \
-                    n-lists from file {}", filename));
-                return false;
+                debug_print(&format!("refill_current_from_file: Error loading from {}", 
+                    filename));
+                false
             }
         }
     }
-
-    /// Save the current batch of newly computed nlists to file
-    ///      - increments the file count
-    ///      - clears the new list (to make room for the next batch)
+    
+    /// Save current batch (converts NoSetList to NoSetListSerialized for compact storage)
     fn save_new_to_file(&mut self) -> bool {
-        // build the file name
-        let file = filename(&self.base_path, self.current_size+1, 
-            self.new_file_count);
-        // get the number of new n-lists to be saved
+        let file = filename(&self.base_path, self.current_size + 1, self.new_file_count);
         let additional_new = self.new.len() as u64;
-
-        // Clone to fresh Vecs to eliminate capacity bloat from Vec growth
-        // This creates compact Vecs with length == capacity
-        let compacted: Vec<NList> = self.new.iter().map(|nlist| NList {
+        
+        // Convert to NoSetListSerialized for compact serialization
+        let conv_start = std::time::Instant::now();
+        let nlists: Vec<NoSetListSerialized> = self.new.iter().map(|nsl| nsl.to_serialized()).collect();
+        self.conversion_time += conv_start.elapsed().as_secs_f64();
+        
+        // Clone to fresh Vecs to eliminate capacity bloat
+        let compacted: Vec<NoSetListSerialized> = nlists.iter().map(|nlist| NoSetListSerialized {
             n: nlist.n,
             max_card: nlist.max_card,
             no_set_list: nlist.no_set_list.iter().copied().collect(),
             remaining_cards_list: nlist.remaining_cards_list.iter().copied().collect(),
         }).collect();
         
-        // Debug: Check first entry capacity vs length
-        if let Some(first) = compacted.first() {
-            debug_print(&format!("save_new_to_file: First NList - no_set len={}, remaining len={}",
-                first.no_set_list.len(), first.remaining_cards_list.len()));
-        }
-
         // Time the file write operation
         let io_start = std::time::Instant::now();
         
-        // try saving the compacted vector to file
-        match save_to_file(&compacted, &file) {
+        match save_to_file_serialized(&compacted, &file) {
             true => {
                 self.file_io_time += io_start.elapsed().as_secs_f64();
                 
-                // the new vector has been saved successfully to file
                 self.new_list_count += additional_new;
                 self.new_file_count += 1;
                 self.new.clear();
-                test_print(&format!("   ... save_new_to_file: saved new batch \
-                    of {} n-lists to {}", additional_new, file));
-                return true;
-            },
+                test_print(&format!("   ... saved {} n-lists to {}", 
+                    additional_new, file));
+                true
+            }
             false => {
                 self.file_io_time += io_start.elapsed().as_secs_f64();
-                // error saving to file
-                debug_print(&format!("save_new_to_file: Error saving new list \
-                    to file {}", file));
-                return false;
+                debug_print(&format!("save_new_to_file: Error saving to {}", file));
+                false
             }
         }
     }
-
-    /// Processes the current n-lists to build the new lists
-    /// Argument: none
-    /// Returns: none
-    /// and:
-    ///     - writes the new n-lists to file in batches of MAX_NLISTS_PER_FILE
+    
+    /// Process one batch using stack-optimized computation
     fn process_one_file_of_current_size_n(&mut self, max: &u64) {
-
-        // do NOT reset the parameters
-        debug_print(&format!("process_one_file_of_current_size_n: Processing \
-            file {} of current no-set-{:02} => will process {} lists to build no-set-{:02} lists", 
-            self.current_file_count, self.current_size, self.current.len(),
-            self.current_size+1));
-        // run the algorithm for each list in the current vector
+        debug_print(&format!("process_one_file_of_current_size_n: Processing file {} \
+            of no-set-{:02} ({} lists)", self.current_file_count, self.current_size, 
+            self.current.len()));
+        
         let len = self.current.len() as u64;
-        let mut i: u64 = 0; 
+        let mut i = 0u64;
+        
         while !self.current.is_empty() {
             debug_print_noln(&format!("{:>5} ", len - i));
-            // pop the first current n-list from the vector
-            let current_nlist = self.current.pop().unwrap();
             
-            // Time the core computation
+            // Pop current n-list
+            let current_nsl = self.current.pop().unwrap();
+            
+            // Time the core computation (STACK-OPTIMIZED)
             let comp_start = std::time::Instant::now();
-            // build the new n-lists from the current n-list
-            let new_nlists = current_nlist.build_higher_nlists();
+            let new_nsls = current_nsl.build_higher_nsl();
             self.computation_time += comp_start.elapsed().as_secs_f64();
             
-            debug_print_noln(&format!("-> +{:>5} new - ", new_nlists.len()));
-            // add the newly created n-lists to the new vector
-            self.new.extend(new_nlists);
+            debug_print_noln(&format!("-> +{:>5} new - ", new_nsls.len()));
+            
+            // Add to new vector (still NoSetList for now)
+            self.new.extend(new_nsls);
+            
             if i % 4 == 0 || i + 1 == len {
                 debug_print(&format!(" - {:>8}", self.new.len()));
             }
-            // check if we have reached the max number of n-lists per file
+            
+            // Check if we need to save
             if self.new.len() as u64 >= *max {
-                // save the new n-lists to file
-                let saved_ok = self.save_new_to_file();
-                if saved_ok {
-                    // the new n-lists were saved to file => reset the new vector
+                if self.save_new_to_file() {
                     self.new.clear();
-                    // no other change needed
                 } else {
-                    // error saving to file
-                    debug_print(&format!("process_one_file_of_current_size_n: Error saving new n-lists to file during build"));
-                    // no early exit on error, let's see...
+                    debug_print("process_one_file_of_current_size_n: Error saving batch");
                 }
             }
+            
             i += 1;
         }
     }
-
-    /// Process all the files for a given size of n-lists
-    /// Argument:
-    ///     - size: number of card in the n-lists to process
-    /// Returns:
-    ///     - number of new n-lists created
-    /// and
-    ///    - writes the new n-lists to file in batches of MAX_NLISTS_PER_FILE
-    pub fn process_all_files_of_current_size_n(&mut self, current_size: u8, 
-        max: &u64) -> u64 {
-        // eligible if size >= 3
+    
+    /// Process all files for a given size
+    pub fn process_all_files_of_current_size_n(&mut self, current_size: u8, max: &u64) -> u64 {
         if current_size < 3 {
             debug_print("process_all_files_of_current_size_n: size must be >= 3");
             return 0;
         }
-        debug_print(&format!("process_all_files_of_current_size_n: start processing files with no-set size {:02}", current_size));
-
+        
+        debug_print(&format!("process_all_files_of_current_size_n: start processing \
+            no-set-{:02}", current_size));
+        
         // Start timing
         let start_time = std::time::Instant::now();
         
         // Reset timing counters
         self.computation_time = 0.0;
         self.file_io_time = 0.0;
-
-        // set all parameters to initial values
-        self.current_size = current_size; // we process lists of size n-1 to build lists of size n
+        self.conversion_time = 0.0;
+        
+        // Initialize
+        self.current_size = current_size;
         self.current.clear();
         self.current_file_count = 0;
         self.new.clear();
         self.new_file_count = 0;
-
-        // process all the files for the given size one after the other, until
-        // there is no more file to read
+        
+        // Process all files
         loop {
-            // load the next file of current n-lists
-            debug_print(&format!("process_all_files_of_current_size_n: current = {} nlists => \
-                will load file number {} for size {:02}", self.current.len(),
-                self.current_file_count, self.current_size));
+            debug_print(&format!("process_all_files_of_current_size_n: loading file {} \
+                for size {:02}", self.current_file_count, self.current_size));
+            
             let loaded = self.refill_current_from_file();
             if loaded {
-                // successfully loaded a new batch of current n-lists
-                debug_print(&format!("process_all_files_of_current_size_n:   ... loaded {} current n-lists", 
+                debug_print(&format!("process_all_files_of_current_size_n: loaded {} n-lists", 
                     self.current.len()));
                 self.process_one_file_of_current_size_n(max);
             } else {
-                // error loading the next file: we are done
-                debug_print(&format!("process_all_files_of_current_size_n:   ... no more file to load for size {:02}", 
-                    self.current_size));
+                debug_print(&format!("process_all_files_of_current_size_n: no more files \
+                    for size {:02}", self.current_size));
                 break;
             }
         }
-        // save any remaining new n-lists to file
-        let remaining_new = self.new.len() as u64;
-        if remaining_new > 0 {
-            debug_print(&format!("process_all_files_of_current_size_n:   \
-                ... will save final batch of {} new lists to {}", 
-                self.new.len(),
-                filename(&self.base_path, self.current_size+1, self.new_file_count)));
+        
+        // Save remaining n-lists
+        if !self.new.is_empty() {
+            debug_print(&format!("process_all_files_of_current_size_n: saving final batch \
+                of {}", self.new.len()));
             if self.save_new_to_file() {
-                debug_print("process_all_files_of_current_size_n:   ... final batch saved successfully");
+                debug_print("process_all_files_of_current_size_n: final batch saved");
             } else {
-                debug_print("process_all_files_of_current_size_n: Error saving final batch of new n-lists to file");
+                debug_print("process_all_files_of_current_size_n: Error saving final batch");
             }
         }
-        // this is done
+        
         let elapsed = start_time.elapsed();
         let elapsed_secs = elapsed.as_secs_f64();
-        let overhead = elapsed_secs - self.computation_time - self.file_io_time;
+        let overhead = elapsed_secs - self.computation_time - self.file_io_time - self.conversion_time;
         
-        debug_print(&format!("process_all_files_of_current_size_n: Finished processing all files for size {:02}", 
-            self.current_size));
+        debug_print(&format!("process_all_files_of_current_size_n: Finished \
+            processing size {:02}", self.current_size));
         
         // Report total with breakdown
-        created_a_total_of(self.new_list_count, self.current_size + 1, 
-            "v0.2.2", elapsed_secs);
+        created_a_total_of(self.new_list_count, self.current_size + 1, elapsed_secs);
         test_print(&format!("   ... timing breakdown: computation {:.2}s \
-            ({:.1}%), file I/O {:.2}s ({:.1}%), overhead {:.2}s ({:.1}%)\n",
+            ({:.1}%), file I/O {:.2}s ({:.1}%), conversion {:.2}s ({:.1}%), \
+            overhead {:.2}s ({:.1}%)",
             self.computation_time, (self.computation_time / elapsed_secs * 100.0),
             self.file_io_time, (self.file_io_time / elapsed_secs * 100.0),
+            self.conversion_time, (self.conversion_time / elapsed_secs * 100.0),
             overhead, (overhead / elapsed_secs * 100.0)));
         
-        return self.new_list_count;
+        self.new_list_count
     }
 }
 
-/// helper to properly print a large number of n-lists with timing info
-pub fn created_a_total_of(nb: u64, size: u8, version: &str, elapsed_secs: f64) {
+impl Default for ListOfNlist {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Helper to print large numbers with thousand separators and timing info
+pub fn created_a_total_of(nb: u64, size: u8, elapsed_secs: f64) {
     let hours = (elapsed_secs / 3600.0) as u64;
     let minutes = ((elapsed_secs % 3600.0) / 60.0) as u64;
     let seconds = (elapsed_secs % 60.0) as u64;
     
-    test_print(&format!("   ... {} created a total of {:>15} no-set-{:02} lists in {:>10.2} seconds ({:02}h{:02}m{:02}s)", 
-            version, nb.separated_string(), size, elapsed_secs, hours, minutes, seconds));
+    test_print(&format!("   ... created a total of {:>15} no-set-{:02} lists \
+        in {:>10.2} seconds ({:02}h{:02}m{:02}s)", 
+        nb.separated_string(), size, elapsed_secs, hours, minutes, seconds));
 }
 
-/// Generate a filename for a given n-list size and batch number
-/// 
-/// # Arguments
-/// * `base_path` - Base directory path (e.g., ".", "T:\\data\\funny_set_exploration", "/mnt/nas/data")
-/// * `size` - Size of the n-list
-/// * `batch_number` - Batch number
-/// 
-/// # Returns
-/// Full path to the file
+/// Generate filename for files (.rkyv extension, NoSetListSerialized format)
 fn filename(base_path: &str, size: u8, batch_number: u16) -> String {
     use std::path::Path;
-    // Use .rkyv extension with v2 prefix for v0.2.2 files
-    let filename = format!("nlist_v2_{:02}_batch_{:03}.rkyv", size, batch_number);
+    // Use .rkyv extension with size_32 encoding for compact 2GB files
+    let filename = format!("nlist_{:02}_batch_{:03}.rkyv", size, batch_number);
     let path = Path::new(base_path).join(filename);
-    return path.to_string_lossy().to_string();
+    path.to_string_lossy().to_string()
 }
 
-// Generate filename for legacy bincode format (backward compatibility)
-//fn filename_bincode(base_path: &str, size: u8, batch_number: u16) -> String {
-//    use std::path::Path;
-//    let filename = format!("nlist_{:02}_batch_{:03}.bin", size, batch_number);
-//    let path = Path::new(base_path).join(filename);
-//    return path.to_string_lossy().to_string();
-//}
-
-/// Saves a list of n-lists to a binary file using rkyv zero-copy serialization
-/// 
-/// # Arguments
-/// * `list_of_nlists` - The list of NList structures to save
-/// * `filename` - Path to the output file
-/// 
-/// # Returns
-/// * `true` on success, `false` on error
-fn save_to_file(list_of_nlists: &Vec<NList>, filename: &str) -> bool {
-    debug_print(&format!("save_to_file: Serializing {} n-lists to {} using rkyv", 
-        list_of_nlists.len(), filename));
+/// Save NoSetListSerialized vector to file using rkyv
+fn save_to_file_serialized(list: &Vec<NoSetListSerialized>, filename: &str) -> bool {
+    debug_print(&format!("save_to_file_serialized: Serializing {} n-lists to {} using rkyv", 
+        list.len(), filename));
     
     // Serialize to memory buffer using rkyv
-    let bytes = match rkyv::to_bytes::<_, 256>(list_of_nlists) {
+    let bytes = match rkyv::to_bytes::<_, 256>(list) {
         Ok(b) => b,
         Err(e) => {
-            debug_print(&format!("save_to_file: Error serializing: {}", e));
+            debug_print(&format!("save_to_file_nlist: Error serializing: {}", e));
             return false;
         }
     };
     
     let bytes_len = bytes.len();
     
-    // Write buffer to file
+    // Write to file
     match std::fs::write(filename, bytes) {
         Ok(_) => {
-            debug_print(&format!("save_to_file: Successfully saved {} bytes to {}", 
-                bytes_len, filename));
+            debug_print(&format!("save_to_file_nlist: Saved {} bytes to {}", bytes_len, filename));
             true
         }
         Err(e) => {
-            debug_print(&format!("save_to_file: Error writing file {}: {}", 
-                filename, e));
+            debug_print(&format!("save_to_file_nlist: Error writing {}: {}", filename, e));
             false
         }
     }
 }
 
-/// Legacy function: Saves using bincode (for backward compatibility)
-#[allow(dead_code)]
-fn save_to_file_bincode(list_of_nlists: &Vec<NList>, filename: &str) -> bool {
-    let encoded = bincode::serialize(list_of_nlists);
-    if encoded.is_err() {
-        debug_print(&format!("save_to_file_bincode: Error serializing n-lists for file \
-            {}: {}", filename, encoded.err().unwrap()));
-        return false;
-    }
-    let result = std::fs::write(filename, 
-        encoded.unwrap());
-    if result.is_err() {
-        debug_print(&format!("save_to_file_bincode: Error writing n-lists to file {}: \
-            {}", filename, result.err().unwrap()));
-        return false;
-    }
-    return true;
-}
-
-/// Reads a list of n-lists from a binary file using rkyv with memory mapping (zero-copy)
-/// 
-/// This provides zero-copy access to the data by memory-mapping the file.
-/// The file is validated before use for safety.
-/// 
-/// # Arguments
-/// * `filename` - Path to the input file
-/// 
-/// # Returns
-/// * `Some(Vec<NList>)` containing the deserialized list on success
-/// * `None` on error
-fn read_from_file(filename: &str) -> Option<Vec<NList>> {
-    debug_print(&format!("read_from_file: Loading n-lists from file {} using rkyv", 
-        filename));
+/// Read NoSetListSerialized vector from file using rkyv with memory mapping
+fn read_from_file_serialized(filename: &str) -> Option<Vec<NoSetListSerialized>> {
+    debug_print(&format!("read_from_file_serialized: Loading n-lists from {} using rkyv", filename));
     
-    // Try rkyv format first
-    if let Some(result) = read_from_file_rkyv(filename) {
-        return Some(result);
-    }
-    
-    // Fall back to bincode for backward compatibility
-    debug_print(&format!("read_from_file: Trying bincode format for {}", filename));
-    read_from_file_bincode(filename)
-}
-
-/// Read using rkyv with memory-mapped file (zero-copy)
-fn read_from_file_rkyv(filename: &str) -> Option<Vec<NList>> {
-    // Open the file
+    // Open file
     let file = match File::open(filename) {
         Ok(f) => f,
         Err(e) => {
-            debug_print(&format!("read_from_file_rkyv: Error opening file {}: {}", 
-                filename, e));
+            debug_print(&format!("read_from_file_nlist: Error opening {}: {}", filename, e));
             return None;
         }
     };
@@ -544,53 +448,29 @@ fn read_from_file_rkyv(filename: &str) -> Option<Vec<NList>> {
         match Mmap::map(&file) {
             Ok(m) => m,
             Err(e) => {
-                debug_print(&format!("read_from_file_rkyv: Error mapping file {}: {}", 
-                    filename, e));
+                debug_print(&format!("read_from_file_nlist: Error mapping {}: {}", filename, e));
                 return None;
             }
         }
     };
     
-    debug_print(&format!("read_from_file_rkyv:   ... mapped {} bytes from file {}", 
-        mmap.len(), filename));
+    debug_print(&format!("read_from_file_serialized: mapped {} bytes from {}", mmap.len(), filename));
     
-    // Validate and access the archived data
-    match check_archived_root::<Vec<NList>>(&mmap) {
+    // Validate and deserialize
+    match check_archived_root::<Vec<NoSetListSerialized>>(&mmap) {
         Ok(archived_vec) => {
-            // Deserialize from the memory-mapped archive using rkyv trait
-            let deserialized: Vec<NList> = archived_vec.deserialize(&mut rkyv::Infallible)
+            let deserialized: Vec<NoSetListSerialized> = archived_vec
+                .deserialize(&mut rkyv::Infallible)
                 .expect("Deserialization should not fail after validation");
             
-            debug_print(&format!("read_from_file_rkyv:   ... deserialized {} n-lists", 
+            debug_print(&format!("read_from_file_serialized: deserialized {} n-lists", 
                 deserialized.len()));
             Some(deserialized)
-        }
+        },
         Err(e) => {
-            debug_print(&format!("read_from_file_rkyv: Validation error for file {}: {:?}", 
+            debug_print(&format!("read_from_file_serialized: Validation error for {}: {:?}",
                 filename, e));
             None
         }
     }
 }
-
-/// Legacy function: Reads using bincode (for backward compatibility)
-fn read_from_file_bincode(filename: &str) -> Option<Vec<NList>> {
-    debug_print(&format!("read_from_file_bincode: Loading n-lists from file {}", 
-        filename));
-
-    let option_bytes = std::fs::read(filename).ok();
-    match option_bytes {
-        None => {
-            debug_print(&format!("read_from_file_bincode: Error reading n-lists from \
-                file {}", filename));
-            return None;
-        }
-        Some(b) => {
-            debug_print(&format!("read_from_file_bincode:   ... read {} bytes from \
-                file {}", b.len(), filename));
-            let option_decoded = bincode::deserialize(&b).ok();
-            return option_decoded;
-        }
-    }
-}
-

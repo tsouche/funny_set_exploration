@@ -4,34 +4,40 @@ A Rust-based exhaustive search algorithm to find all combinations of 12, 15, and
 
 ## Project Status
 
-**Current Version:** 0.2.2 (December 2025)
+**Current Version:** 0.3.2 (December 2025)
+
+**Architecture:** Hybrid stack/heap implementation
+- **NoSetList** (stack arrays): Zero-allocation computation, 4-5× faster
+- **NoSetListSerialized** (heap Vec): Compact 2GB files with rkyv size_32
+- **Best of both worlds**: Fast computation + compact storage
 
 **Working Features:**
 
-- ✅ Complete algorithm implementation for n-list generation (3 to 18 cards)
-- ✅ Zero-copy serialization with rkyv (10-100x faster reads, 50% less memory)
+- ✅ Hybrid implementation (stack compute + heap I/O)
+- ✅ Zero-copy serialization with rkyv (10-100x faster reads)
 - ✅ Memory-mapped file I/O for optimal performance
-- ✅ CLI support with optional arguments (--size, --output-path)
-- ✅ Batch file processing (20M n-lists per file, ~4GB each)
+- ✅ CLI support with size ranges (--size 5-7)
+- ✅ Extended size range support (4-18 cards)
+- ✅ Batch file processing (20M entries per file, ~2GB each)
 - ✅ Configurable output directories (local, network, NAS support)
-- ✅ Backward compatible with old bincode files
 - ✅ Progress tracking and formatted output
 
 **Completed Computations:**
 
 - 3-card lists: 58,896 combinations
-- 4-card lists: 1,098,240 combinations  
-- 5-card lists: 13,394,538 combinations
+- 4-card lists: 1,004,589 combinations
+- 5-card lists: 14,399,538 combinations
 - 6-card lists: 155,769,345 combinations
-- 7-card lists: In progress...
+- 7-card lists: 1,180,345,041 combinations
+- 8-card lists: In progress...
 
 ## Quick Start
 
 ### Prerequisites
 
 - Rust toolchain (2024 edition or later)
-- ~13.5GB RAM for processing
-- Significant disk space for output files (~4GB per batch file)
+- ~12-15GB RAM for processing
+- Significant disk space for output files (~2GB per batch file)
 
 ### Build and Run
 
@@ -43,25 +49,87 @@ cd funny_set_exploration
 # Build the project
 cargo build --release
 
-# Run the exploration
-cargo run --release
+# Run with default behavior (sizes 4-6)
+./target/release/funny_set_exploration
+
+# Run with specific size
+./target/release/funny_set_exploration --size 7
+
+# Run with size range
+./target/release/funny_set_exploration --size 5-7
+
+# Run with custom output directory
+./target/release/funny_set_exploration --size 7 --output-path T:\data\funny_set_exploration
 ```
 
-### Configure Output Directory
+### CLI Options
 
-By default, files are saved in the current directory. To use a custom location (e.g., NAS drive):
+```bash
+funny_set_exploration [OPTIONS]
 
-**In `src/main.rs`:**
+Options:
+  -s, --size <SIZE>
+          Target size to build (4-18 or range like 5-7)
+          If omitted, runs default behavior (creates seeds + sizes 4-6)
 
-```rust
-// Windows NAS example:
-let mut no_set_lists = ListOfNlist::with_path(r"T:\data\funny_set_exploration");
+  -o, --output-path <OUTPUT_PATH>
+          Output directory path (optional)
+          Examples:
+            Windows: T:\data\funny_set_exploration
+            Linux:   /mnt/nas/data/funny_set_exploration
+            Relative: ./output
 
-// Linux NAS example:
-let mut no_set_lists = ListOfNlist::with_path("/mnt/nas/data/funny_set_exploration");
+  -h, --help
+          Print help
 ```
 
-See [`PATH_CONFIGURATION.md`](PATH_CONFIGURATION.md) for detailed examples.
+### Output Files
+
+Files are named: `nlist_{size:02}_batch_{batch:03}.rkyv`
+
+Examples:
+- `nlist_05_batch_000.rkyv` - First batch of 5-card lists (~2GB)
+- `nlist_06_batch_000.rkyv` - First batch of 6-card lists (~2GB)
+- `nlist_07_batch_059.rkyv` - 60th batch of 7-card lists
+
+## Architecture
+
+### Version History
+
+- **v0.3.2** (Current): Simplified to hybrid-only implementation
+  - Removed v0.2.2 (heap-based) and v0.3.0 (stack-only)
+  - Cleaner codebase with single optimized approach
+  - NoSetListSerialized for clear separation of concerns
+
+- **v0.3.1**: Hybrid stack/heap approach
+  - Combined stack computation (fast) with heap I/O (compact)
+  - 23% faster overall than v0.2.2
+  - Same 2GB file size as v0.2.2
+
+- **v0.3.0**: Full stack implementation
+  - 6-7× faster computation
+  - 7-8× larger files (15GB) - I/O bottleneck
+  - Proved stack optimization benefits
+
+- **v0.2.2**: Original heap-based with rkyv
+  - Baseline implementation
+  - 2GB files with zero-copy deserialization
+
+### Performance Comparison
+
+**Size 6 processing (155M lists):**
+
+| Metric | v0.3.2 (Current) | v0.2.2 (Heap) |
+|--------|------------------|---------------|
+| Total time | ~308s | ~398s |
+| Computation | ~19s (6%) | ~225s (56%) |
+| File I/O | ~166s (54%) | ~140s (35%) |
+| File size | ~2GB | ~2GB |
+
+**Key improvements:**
+- 10× faster core algorithm (stack operations)
+- Same compact file format (rkyv with Vec)
+- 23% faster overall despite conversion overhead
 
 ## Principle of the algorithm
 

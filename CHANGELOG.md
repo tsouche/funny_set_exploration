@@ -5,6 +5,107 @@ All notable changes to the funny_set_exploration project are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2025-12-07
+
+### Changed
+
+- **Simplified to single hybrid implementation**: Removed v0.2.2 (full heap) and v0.3.0 (full stack) implementations
+  - Only v0.3.1 hybrid approach remains as the production implementation
+  - Removed `-v/--version` CLI flag - no longer needed with single implementation
+  - Simplified codebase by removing `list_of_nlists.rs` (v0.2.2) and `list_of_nsl.rs` (v0.3.0)
+- **Module refactoring for clarity**:
+  - Renamed `NList` → `NoSetListSerialized` to clarify its role as a serialization format
+  - Renamed `nlist.rs` → `no_set_list_serialized.rs` 
+  - Updated conversion methods: `from_nlist()`/`to_nlist()` → `from_serialized()`/`to_serialized()`
+  - Renamed `ListOfNSLHybrid` → `ListOfNlist`
+  - Renamed `list_of_nsl_hybrid.rs` → `list_of_nlists.rs`
+- **File naming simplified**: `nlist_v31_*` → `nlist_*` (removed version prefix)
+- **Updated CLI interface**:
+  ```bash
+  # Before (v0.3.1):
+  funny.exe -v 31 --size 5-7 -o T:\data
+  
+  # After (v0.3.2):
+  funny.exe --size 5-7 -o T:\data
+  ```
+
+### Architecture
+
+**Current Implementation (Hybrid Only):**
+- **NoSetList** (stack-based, fixed arrays): Fast computation with zero heap allocations
+- **NoSetListSerialized** (heap-based, Vec): Compact I/O format (~2GB per 20M batch)
+- **Conversion**: Explicit `to_serialized()`/`from_serialized()` between formats
+- **Performance**: 4-5× faster computation than v0.2.2, same compact file size
+
+### Removed
+
+- v0.2.2 heap-based implementation (was: slower but working)
+- v0.3.0 stack-only implementation (was: fast but 15GB files)
+- Multi-version CLI dispatch code
+- Legacy `build_higher_nlists()` method (unused since v0.3.1)
+
+## [0.3.1] - 2025-12-07
+
+### Added
+
+- **Hybrid implementation combining best of v0.2.2 and v0.3.0**:
+  - Uses `NoSetList` (stack arrays) for 4-5× faster computation
+  - Converts to `NList` (heap Vec) for compact 2GB files
+  - Best of both worlds: fast + compact
+- **Detailed timing breakdown**:
+  - `computation_time`: Core algorithm execution (stack operations)
+  - `file_io_time`: File read/write operations
+  - `conversion_time`: NoSetList ↔ NList transformations
+- **File format**: `.rkyv` files with version prefix `nlist_v31_*`
+
+### Performance
+
+**v0.3.1 vs v0.2.2 (size 6):**
+- Total time: 308s vs 398s (~23% faster)
+- Computation: 6.2% vs 53-57% (10× less time in algorithm)
+- File I/O: 54% vs 32-40% (larger share due to faster compute)
+- Conversion: 12.1% (new overhead, acceptable)
+- File size: ~2GB (same as v0.2.2)
+
+### Technical Details
+
+- Hybrid conversion adds ~12% overhead but worth it for compact files
+- Memory-mapped I/O still used for zero-copy deserialization
+- rkyv size_32 encoding maintains 2GB file sizes
+- Compatible file format with v0.2.2 (both use NList for I/O)
+
+## [0.3.0] - 2025-12-06
+
+### Added
+
+- **Full stack-optimized implementation**: Zero heap allocation during computation
+  - New `NoSetList` struct with fixed-size arrays (`[usize; 18]`, `[usize; 78]`)
+  - Implements `Copy` trait for efficient stack operations
+  - New `build_higher_nsl()` method using in-place stack manipulations
+  - New file format: `.nsl` files (stack-serialized format)
+- **Separate module**: `list_of_nsl.rs` for stack-only processing
+- **Version dispatch**: CLI `-v 3` flag to select stack implementation
+
+### Performance
+
+**v0.3.0 vs v0.2.2 (size 5):**
+- Total time: 63s vs 380-426s (6-7× faster)
+- Computation: 2.3% vs 56% (25× faster algorithm)
+- File I/O: 89.8% vs 32-36% (became the bottleneck)
+
+**Trade-offs:**
+- ✅ 4-8× faster computation (zero malloc overhead)
+- ✅ Better cache locality with stack data
+- ❌ 7-8× larger files (~15GB vs ~2GB per batch)
+- ❌ High I/O overhead negates computation gains
+
+### Technical Details
+
+- Fixed-size arrays serialize full 768 bytes per entry
+- rkyv with arrays: no length compression like Vec
+- Bottleneck shifted from computation to I/O
+- Led to development of hybrid v0.3.1 approach
+
 ## [0.2.2] - 2025-12-06
 
 ### Added
