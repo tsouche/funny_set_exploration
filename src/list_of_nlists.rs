@@ -151,10 +151,18 @@ impl ListOfNlist {
             }
         }
         self.current_list_count = self.current.len() as u64;
-
+        
+        // Clone to fresh Vecs to eliminate capacity bloat
+        let compacted: Vec<NList> = self.current.iter().map(|nlist| NList {
+            n: nlist.n,
+            max_card: nlist.max_card,
+            no_set_list: nlist.no_set_list.iter().copied().collect(),
+            remaining_cards_list: nlist.remaining_cards_list.iter().copied().collect(),
+        }).collect();
+        
         // done with creating all seed-lists: save them to file
         let file = filename(&self.base_path, 3, 0);
-        match save_to_file(&self.current, &file) {
+        match save_to_file(&compacted, &file) {
             true => debug_print(&format!("create_seed_lists:   ... saved {} seed \
                         lists to {}", self.current_list_count, file)),
             false => debug_print(&format!("create_seed_lists: Error saving \
@@ -227,11 +235,26 @@ impl ListOfNlist {
         // get the number of new n-lists to be saved
         let additional_new = self.new.len() as u64;
 
+        // Clone to fresh Vecs to eliminate capacity bloat from Vec growth
+        // This creates compact Vecs with length == capacity
+        let compacted: Vec<NList> = self.new.iter().map(|nlist| NList {
+            n: nlist.n,
+            max_card: nlist.max_card,
+            no_set_list: nlist.no_set_list.iter().copied().collect(),
+            remaining_cards_list: nlist.remaining_cards_list.iter().copied().collect(),
+        }).collect();
+        
+        // Debug: Check first entry capacity vs length
+        if let Some(first) = compacted.first() {
+            debug_print(&format!("save_new_to_file: First NList - no_set len={}, remaining len={}",
+                first.no_set_list.len(), first.remaining_cards_list.len()));
+        }
+
         // Time the file write operation
         let io_start = std::time::Instant::now();
         
-        // try saving the new vector to file
-        match save_to_file(&self.new, &file) {
+        // try saving the compacted vector to file
+        match save_to_file(&compacted, &file) {
             true => {
                 self.file_io_time += io_start.elapsed().as_secs_f64();
                 
@@ -408,8 +431,8 @@ pub fn created_a_total_of(nb: u64, size: u8, version: &str, elapsed_secs: f64) {
 /// Full path to the file
 fn filename(base_path: &str, size: u8, batch_number: u16) -> String {
     use std::path::Path;
-    // Use .rkyv extension for zero-copy files
-    let filename = format!("nlist_{:02}_batch_{:03}.rkyv", size, batch_number);
+    // Use .rkyv extension with v2 prefix for v0.2.2 files
+    let filename = format!("nlist_v2_{:02}_batch_{:03}.rkyv", size, batch_number);
     let path = Path::new(base_path).join(filename);
     return path.to_string_lossy().to_string();
 }

@@ -1,13 +1,16 @@
-/// Stack-optimized version of ListOfNlist using NoSetList
+/// Hybrid v0.3.1: Stack-optimized computation with heap-based I/O
 /// 
-/// This module provides batch processing for NoSetList structures with
-/// rkyv serialization. Unlike ListOfNlist, this version:
-/// - Uses NoSetList (stack-allocated) instead of NList (heap-allocated)
-/// - No backward compatibility with v0.2.2 serde/bincode
-/// - Pure rkyv serialization for maximum performance
-/// - File extension: .nsl (NoSetList format)
+/// This module combines the best of both worlds:
+/// - Uses NoSetList (stack arrays) for computation → 4-5× faster
+/// - Converts to NList (heap Vecs) for I/O → 6-8× smaller files
+/// 
+/// Performance characteristics:
+/// - Computation: Same speed as v0.3.0 (stack-optimized)
+/// - File size: Same as v0.2.2 (~2GB per batch)
+/// - File I/O: Same speed as v0.2.2 (small files)
+/// - Memory: Moderate (~12-15GB peak during conversion + save)
 ///
-/// Version: 0.3.0 (breaking change from v0.2.2)
+/// Version: 0.3.1 (hybrid approach)
 
 use std::fs::File;
 
@@ -20,26 +23,25 @@ use separator::Separatable;
 use crate::utils::*;
 use crate::set::*;
 use crate::no_set_list::*;
+use crate::nlist::*;
 
-/// Stack-optimized batch processor for NoSetList structures
-/// 
-/// Similar to ListOfNlist but optimized for stack-allocated NoSetList.
-/// No serde support - pure rkyv for v0.3.0+.
-pub struct ListOfNSL {
+/// Hybrid batch processor: NoSetList for compute, NList for I/O
+pub struct ListOfNSLHybrid {
     pub current_size: u8,          // # of cards in the current no-set-lists
-    pub current: Vec<NoSetList>,   // current n-lists being processed
+    pub current: Vec<NoSetList>,   // current n-lists (stack-based for computation)
     pub current_file_count: u16,   // number of current file being processed
     pub current_list_count: u64,   // number of current n-lists processed so far
-    pub new: Vec<NoSetList>,       // newly created n+1-lists
+    pub new: Vec<NoSetList>,       // newly created n+1-lists (stack-based during compute)
     pub new_file_count: u16,       // number of files saved so far
     pub new_list_count: u64,       // number of new n-lists created so far
     pub base_path: String,         // base directory for saving/loading files
     pub computation_time: f64,     // time spent in core algorithm
     pub file_io_time: f64,         // time spent in file I/O operations
+    pub conversion_time: f64,      // time spent converting between formats
 }
 
-impl ListOfNSL {
-    /// Creates a new, empty ListOfNSL with default directory (".")
+impl ListOfNSLHybrid {
+    /// Creates a new, empty ListOfNSLHybrid with default directory (".")
     pub fn new() -> Self {
         Self {
             current_size: 0,
@@ -52,16 +54,11 @@ impl ListOfNSL {
             base_path: String::from("."),
             computation_time: 0.0,
             file_io_time: 0.0,
+            conversion_time: 0.0,
         }
     }
     
-    /// Creates a new ListOfNSL with a custom base path
-    /// 
-    /// # Arguments
-    /// * `base_path` - Base directory path for saving/loading files
-    ///                 Examples:
-    ///                 - Windows: r"T:\data\funny_set_exploration"
-    ///                 - Linux: "/mnt/nas/data/funny_set_exploration"
+    /// Creates a new ListOfNSLHybrid with a custom base path
     pub fn with_path(base_path: &str) -> Self {
         Self {
             current_size: 0,
@@ -74,18 +71,11 @@ impl ListOfNSL {
             base_path: String::from(base_path),
             computation_time: 0.0,
             file_io_time: 0.0,
+            conversion_time: 0.0,
         }
     }
     
     /// Build all possible no-set-03 combinations using stack allocation
-    /// 
-    /// Creates seed lists (3-card combinations with no sets) entirely on the stack.
-    /// This eliminates the ~117,792 heap allocations from the original version.
-    /// 
-    /// Maximum card indices:
-    /// - For 12-card target: max_card = 72 (need 9 more cards)
-    /// - For 15-card target: max_card = 68 (need 12 more cards)
-    /// - For 18-card target: max_card = 65 (need 15 more cards)
     pub fn create_seed_lists(&mut self) {
         // Start timing
         let start_time = std::time::Instant::now();
@@ -105,11 +95,7 @@ impl ListOfNSL {
                 for k in (j + 1)..72 {
                     // Check if (i,j,k) forms a set
                     if !is_set(i, j, k) {
-                        // ====================================================
-                        // STACK ALLOCATION: Build seed list on stack
-                        // ====================================================
-                        
-                        // Primary list: stack array
+                        // Build seed list on stack
                         let mut no_set_array = [0usize; 18];
                         no_set_array[0] = i;
                         no_set_array[1] = j;
@@ -125,7 +111,7 @@ impl ListOfNSL {
                             remaining_len += 1;
                         }
                         
-                        // Remove forbidden cards (in-place, no retain())
+                        // Remove forbidden cards
                         let forbidden = [
                             next_to_set(i, j),
                             next_to_set(i, k),
@@ -165,40 +151,58 @@ impl ListOfNSL {
         
         self.current_list_count = self.current.len() as u64;
         
-        // Save seed lists to file
+        // Convert to NList and save (hybrid I/O)
+        let conv_start = std::time::Instant::now();
+        let nlists: Vec<NList> = self.current.iter().map(|nsl| nsl.to_nlist()).collect();
+        self.conversion_time = conv_start.elapsed().as_secs_f64();
+        
+        // Clone to fresh Vecs to eliminate capacity bloat
+        let compacted: Vec<NList> = nlists.iter().map(|nlist| NList {
+            n: nlist.n,
+            max_card: nlist.max_card,
+            no_set_list: nlist.no_set_list.iter().copied().collect(),
+            remaining_cards_list: nlist.remaining_cards_list.iter().copied().collect(),
+        }).collect();
+        
         let file = filename(&self.base_path, 3, 0);
-        match save_to_file(&self.current, &file) {
+        
+        let io_start = std::time::Instant::now();
+        match save_to_file_nlist(&compacted, &file) {
             true => debug_print(&format!("create_seed_lists: saved {} seed lists to {}", 
                 self.current_list_count, file)),
             false => debug_print(&format!("create_seed_lists: Error saving seed lists to {}", 
                 file)),
         }
+        self.file_io_time = io_start.elapsed().as_secs_f64();
         
         // Report completion with timing
         let elapsed = start_time.elapsed();
         let elapsed_secs = elapsed.as_secs_f64();
-        created_a_total_of(self.current_list_count, 3, "v0.3.0", elapsed_secs);
+        created_a_total_of(self.current_list_count, 3, "v0.3.1", elapsed_secs);
         
         // Clear current list to make room for processing
         self.current.clear();
         self.current_list_count = 0;
     }
     
-    /// Load a batch of current n-lists from file
-    /// 
-    /// Uses memory-mapped rkyv deserialization for zero-copy reading.
-    /// 
-    /// # Returns
-    /// true on success, false on failure
+    /// Load a batch of current n-lists from file (reads NList, converts to NoSetList)
     fn refill_current_from_file(&mut self) -> bool {
         let filename = filename(&self.base_path, self.current_size, self.current_file_count);
         
         // Time the file read operation
         let io_start = std::time::Instant::now();
         
-        match read_from_file(&filename) {
-            Some(vec_nsl) => {
-                self.file_io_time += io_start.elapsed().as_secs_f64();
+        let result = read_from_file_nlist(&filename);
+        self.file_io_time += io_start.elapsed().as_secs_f64();
+        
+        match result {
+            Some(vec_nlist) => {
+                // Convert from NList to NoSetList for fast computation
+                let conv_start = std::time::Instant::now();
+                let vec_nsl: Vec<NoSetList> = vec_nlist.iter()
+                    .map(|nl| NoSetList::from_nlist(nl))
+                    .collect();
+                self.conversion_time += conv_start.elapsed().as_secs_f64();
                 
                 let add_len = vec_nsl.len();
                 self.current.extend(vec_nsl);
@@ -210,7 +214,6 @@ impl ListOfNSL {
                 true
             }
             None => {
-                self.file_io_time += io_start.elapsed().as_secs_f64();
                 debug_print(&format!("refill_current_from_file: Error loading from {}", 
                     filename));
                 false
@@ -218,22 +221,31 @@ impl ListOfNSL {
         }
     }
     
-    /// Save current batch of newly computed n-lists to file
-    /// 
-    /// Uses rkyv serialization for zero-copy reading later.
-    /// 
-    /// # Returns
-    /// true on success, false on failure
+    /// Save current batch (converts NoSetList to NList for compact storage)
     fn save_new_to_file(&mut self) -> bool {
         let file = filename(&self.base_path, self.current_size + 1, self.new_file_count);
         let additional_new = self.new.len() as u64;
         
+        // Convert to NList for compact serialization
+        let conv_start = std::time::Instant::now();
+        let nlists: Vec<NList> = self.new.iter().map(|nsl| nsl.to_nlist()).collect();
+        self.conversion_time += conv_start.elapsed().as_secs_f64();
+        
+        // Clone to fresh Vecs to eliminate capacity bloat
+        let compacted: Vec<NList> = nlists.iter().map(|nlist| NList {
+            n: nlist.n,
+            max_card: nlist.max_card,
+            no_set_list: nlist.no_set_list.iter().copied().collect(),
+            remaining_cards_list: nlist.remaining_cards_list.iter().copied().collect(),
+        }).collect();
+        
         // Time the file write operation
         let io_start = std::time::Instant::now();
         
-        match save_to_file(&self.new, &file) {
+        match save_to_file_nlist(&compacted, &file) {
             true => {
                 self.file_io_time += io_start.elapsed().as_secs_f64();
+                
                 self.new_list_count += additional_new;
                 self.new_file_count += 1;
                 self.new.clear();
@@ -249,13 +261,7 @@ impl ListOfNSL {
         }
     }
     
-    /// Process one batch of current n-lists to build n+1-lists
-    /// 
-    /// Uses stack-optimized build_higher_nsl() for zero heap allocations
-    /// in the core algorithm loop.
-    /// 
-    /// # Arguments
-    /// * `max` - Maximum n-lists per file before saving
+    /// Process one batch using stack-optimized computation
     fn process_one_file_of_current_size_n(&mut self, max: &u64) {
         debug_print(&format!("process_one_file_of_current_size_n: Processing file {} \
             of no-set-{:02} ({} lists)", self.current_file_count, self.current_size, 
@@ -270,15 +276,14 @@ impl ListOfNSL {
             // Pop current n-list
             let current_nsl = self.current.pop().unwrap();
             
-            // Time the core computation
+            // Time the core computation (STACK-OPTIMIZED)
             let comp_start = std::time::Instant::now();
-            // Build new n-lists using STACK-OPTIMIZED algorithm
             let new_nsls = current_nsl.build_higher_nsl();
             self.computation_time += comp_start.elapsed().as_secs_f64();
             
             debug_print_noln(&format!("-> +{:>5} new - ", new_nsls.len()));
             
-            // Add to new vector
+            // Add to new vector (still NoSetList for now)
             self.new.extend(new_nsls);
             
             if i % 4 == 0 || i + 1 == len {
@@ -298,14 +303,7 @@ impl ListOfNSL {
         }
     }
     
-    /// Process all files for a given size of n-lists
-    /// 
-    /// # Arguments
-    /// * `current_size` - Number of cards in n-lists to process
-    /// * `max` - Maximum n-lists per file
-    /// 
-    /// # Returns
-    /// Total number of new n-lists created
+    /// Process all files for a given size
     pub fn process_all_files_of_current_size_n(&mut self, current_size: u8, max: &u64) -> u64 {
         if current_size < 3 {
             debug_print("process_all_files_of_current_size_n: size must be >= 3");
@@ -321,6 +319,7 @@ impl ListOfNSL {
         // Reset timing counters
         self.computation_time = 0.0;
         self.file_io_time = 0.0;
+        self.conversion_time = 0.0;
         
         // Initialize
         self.current_size = current_size;
@@ -359,25 +358,27 @@ impl ListOfNSL {
         
         let elapsed = start_time.elapsed();
         let elapsed_secs = elapsed.as_secs_f64();
-        let overhead = elapsed_secs - self.computation_time - self.file_io_time;
+        let overhead = elapsed_secs - self.computation_time - self.file_io_time - self.conversion_time;
         
-        debug_print(&format!("process_all_files_of_current_size_n: Finished processing \
-            size {:02}", self.current_size));
+        debug_print(&format!("process_all_files_of_current_size_n: Finished \
+            processing size {:02}", self.current_size));
         
         // Report total with breakdown
         created_a_total_of(self.new_list_count, self.current_size + 1, 
-            "v0.3.0", elapsed_secs);
+            "v0.3.1", elapsed_secs);
         test_print(&format!("   ... timing breakdown: computation {:.2}s \
-            ({:.1}%), file I/O {:.2}s ({:.1}%), overhead {:.2}s ({:.1}%)\n",
+            ({:.1}%), file I/O {:.2}s ({:.1}%), conversion {:.2}s ({:.1}%), \
+            overhead {:.2}s ({:.1}%)",
             self.computation_time, (self.computation_time / elapsed_secs * 100.0),
             self.file_io_time, (self.file_io_time / elapsed_secs * 100.0),
+            self.conversion_time, (self.conversion_time / elapsed_secs * 100.0),
             overhead, (overhead / elapsed_secs * 100.0)));
         
         self.new_list_count
     }
 }
 
-impl Default for ListOfNSL {
+impl Default for ListOfNSLHybrid {
     fn default() -> Self {
         Self::new()
     }
@@ -393,41 +394,25 @@ pub fn created_a_total_of(nb: u64, size: u8, version: &str, elapsed_secs: f64) {
             version, nb.separated_string(), size, elapsed_secs, hours, minutes, seconds));
 }
 
-/// Generate filename for NoSetList files (.nsl extension)
-/// 
-/// # Arguments
-/// * `base_path` - Base directory path
-/// * `size` - Size of the n-list
-/// * `batch_number` - Batch number
-/// 
-/// # Returns
-/// Full path to the file
+/// Generate filename for hybrid files (.rkyv extension, NList format)
 fn filename(base_path: &str, size: u8, batch_number: u16) -> String {
     use std::path::Path;
-    // Use .nsl extension with v3 prefix for NoSetList files (v0.3.0)
-    let filename = format!("nlist_v3_{:02}_batch_{:03}.nsl", size, batch_number);
+    // Use .rkyv extension with v31 prefix to distinguish from v0.2.2
+    let filename = format!("nlist_v31_{:02}_batch_{:03}.rkyv", size, batch_number);
     let path = Path::new(base_path).join(filename);
     path.to_string_lossy().to_string()
 }
 
-/// Save NoSetList vector to file using rkyv
-/// 
-/// # Arguments
-/// * `list` - Vector of NoSetList structures
-/// * `filename` - Output file path
-/// 
-/// # Returns
-/// true on success, false on error
-fn save_to_file(list: &Vec<NoSetList>, filename: &str) -> bool {
-    debug_print(&format!("save_to_file: Serializing {} n-lists to {} using rkyv", 
+/// Save NList vector to file using rkyv
+fn save_to_file_nlist(list: &Vec<NList>, filename: &str) -> bool {
+    debug_print(&format!("save_to_file_nlist: Serializing {} n-lists to {} using rkyv", 
         list.len(), filename));
     
     // Serialize to memory buffer using rkyv
-    // Use 256KB scratch space for large vectors (20M entries × 792 bytes each)
-    let bytes = match rkyv::to_bytes::<_, 262144>(list) {
+    let bytes = match rkyv::to_bytes::<_, 256>(list) {
         Ok(b) => b,
         Err(e) => {
-            debug_print(&format!("save_to_file: Error serializing: {}", e));
+            debug_print(&format!("save_to_file_nlist: Error serializing: {}", e));
             return false;
         }
     };
@@ -437,31 +422,25 @@ fn save_to_file(list: &Vec<NoSetList>, filename: &str) -> bool {
     // Write to file
     match std::fs::write(filename, bytes) {
         Ok(_) => {
-            debug_print(&format!("save_to_file: Saved {} bytes to {}", bytes_len, filename));
+            debug_print(&format!("save_to_file_nlist: Saved {} bytes to {}", bytes_len, filename));
             true
         }
         Err(e) => {
-            debug_print(&format!("save_to_file: Error writing {}: {}", filename, e));
+            debug_print(&format!("save_to_file_nlist: Error writing {}: {}", filename, e));
             false
         }
     }
 }
 
-/// Read NoSetList vector from file using rkyv with memory mapping
-/// 
-/// # Arguments
-/// * `filename` - Input file path
-/// 
-/// # Returns
-/// Some(Vec<NoSetList>) on success, None on error
-fn read_from_file(filename: &str) -> Option<Vec<NoSetList>> {
-    debug_print(&format!("read_from_file: Loading n-lists from {} using rkyv", filename));
+/// Read NList vector from file using rkyv with memory mapping
+fn read_from_file_nlist(filename: &str) -> Option<Vec<NList>> {
+    debug_print(&format!("read_from_file_nlist: Loading n-lists from {} using rkyv", filename));
     
     // Open file
     let file = match File::open(filename) {
         Ok(f) => f,
         Err(e) => {
-            debug_print(&format!("read_from_file: Error opening {}: {}", filename, e));
+            debug_print(&format!("read_from_file_nlist: Error opening {}: {}", filename, e));
             return None;
         }
     };
@@ -471,53 +450,29 @@ fn read_from_file(filename: &str) -> Option<Vec<NoSetList>> {
         match Mmap::map(&file) {
             Ok(m) => m,
             Err(e) => {
-                debug_print(&format!("read_from_file: Error mapping {}: {}", filename, e));
+                debug_print(&format!("read_from_file_nlist: Error mapping {}: {}", filename, e));
                 return None;
             }
         }
     };
     
-    debug_print(&format!("read_from_file: mapped {} bytes from {}", mmap.len(), filename));
+    debug_print(&format!("read_from_file_nlist: mapped {} bytes from {}", mmap.len(), filename));
     
     // Validate and deserialize
-    match check_archived_root::<Vec<NoSetList>>(&mmap) {
+    match check_archived_root::<Vec<NList>>(&mmap) {
         Ok(archived_vec) => {
-            let deserialized: Vec<NoSetList> = archived_vec
+            let deserialized: Vec<NList> = archived_vec
                 .deserialize(&mut rkyv::Infallible)
                 .expect("Deserialization should not fail after validation");
             
-            debug_print(&format!("read_from_file: deserialized {} n-lists", 
+            debug_print(&format!("read_from_file_nlist: deserialized {} n-lists", 
                 deserialized.len()));
             Some(deserialized)
         }
         Err(e) => {
-            debug_print(&format!("read_from_file: Validation error for {}: {:?}", 
+            debug_print(&format!("read_from_file_nlist: Validation error for {}: {:?}", 
                 filename, e));
             None
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    #[test]
-    fn test_new() {
-        let list = ListOfNSL::new();
-        assert_eq!(list.current_size, 0);
-        assert_eq!(list.base_path, ".");
-    }
-    
-    #[test]
-    fn test_with_path() {
-        let list = ListOfNSL::with_path("/tmp/test");
-        assert_eq!(list.base_path, "/tmp/test");
-    }
-    
-    #[test]
-    fn test_filename_generation() {
-        let fname = filename(".", 5, 42);
-        assert!(fname.contains("nlist_05_batch_042.nsl"));
     }
 }

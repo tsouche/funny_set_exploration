@@ -235,7 +235,7 @@ impl NoSetList {
     /// Convert from heap-based NList to stack-based NoSetList
     pub fn from_nlist(nlist: &crate::nlist::NList) -> Self {
         Self::from_slices(
-            nlist.size,
+            nlist.n,
             nlist.max_card,
             &nlist.no_set_list,
             &nlist.remaining_cards_list,
@@ -249,7 +249,7 @@ impl NoSetList {
     /// - Convert to NList (heap) for compact serialization
     pub fn to_nlist(&self) -> crate::nlist::NList {
         crate::nlist::NList {
-            size: self.size,
+            n: self.size,
             max_card: self.max_card,
             no_set_list: self.no_set_slice().to_vec(),
             remaining_cards_list: self.remaining_slice().to_vec(),
