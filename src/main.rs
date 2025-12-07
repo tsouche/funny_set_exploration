@@ -117,16 +117,22 @@ fn main() {
         // =====================================================================
         // DEFAULT MODE: Original behavior
         // =====================================================================
-        test_print("   - will create        58.896 no-set-lists with  3 cards");
-        test_print("   - will create     1.004.589 no-set-lists with  4 cards");
-        test_print("   - will create    13.394.538 no-set-lists with  5 cards");
-        test_print("   - will create   141.370.218 no-set-lists with  6 cards");
-        test_print("   - will create   ___.___.___ no-set-lists with  7 cards");
-        test_print("   - will create   ___.___.___ no-set-lists with  8 cards");
-        test_print("   - will create   ___.___.___ no-set-lists with  9 cards");
-        test_print("   - will create   ___.___.___ no-set-lists with 10 cards");
-        test_print("   - will create   ___.___.___ no-set-lists with 11 cards");
-        test_print("   - will create   ___.___.___ no-set-lists with 12 cards");
+        test_print("   - will create         58.896 no-set-lists with  3 cards");
+        test_print("   - will create      1.004.589 no-set-lists with  4 cards");
+        test_print("   - will create     13.394.538 no-set-lists with  5 cards");
+        test_print("   - will create    141.370.218 no-set-lists with  6 cards");
+        test_print("   - will create  1.180.345.041 no-set-lists with  7 cards");
+        test_print("   - will create  7.920.450.378 no-set-lists with  8 cards");
+        test_print("   - will create  _.___.___.___ no-set-lists with  9 cards");
+        test_print("   - will create  _.___.___.___ no-set-lists with 10 cards");
+        test_print("   - will create  _.___.___.___ no-set-lists with 11 cards");
+        test_print("   - will create  _.___.___.___ no-set-lists with 12 cards");
+        test_print("   - will create  _.___.___.___ no-set-lists with 13 cards");
+        test_print("   - will create  _.___.___.___ no-set-lists with 14 cards");
+        test_print("   - will create  _.___.___.___ no-set-lists with 15 cards");
+        test_print("   - will create  _.___.___.___ no-set-lists with 16 cards");
+        test_print("   - will create  _.___.___.___ no-set-lists with 17 cards");
+        test_print("   - will create  _.___.___.___ no-set-lists with 18 cards");
         test_print("\n======================\n");
 
         // ========================================================================
