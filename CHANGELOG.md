@@ -14,8 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Counts existing output files to preserve accurate totals across restarts
   - Only counts files created from input batches before the restart point
 - **Modular file naming system**: Enhanced filename format for better tracking
-  - Format: `nsl_{source_size:02}_batch_{source_batch:03}_to_{target_size:02}_batch_{target_batch:03}.rkyv`
-  - Example: `nsl_05_batch_001_to_06_batch_000.rkyv` (from size 5 batch 1, creates size 6 batch 0)
+  - Format: `nsl_{source_size:02}_batch_{source_batch:05}_to_{target_size:02}_batch_{target_batch:05}.rkyv`
+  - Example: `nsl_05_batch_00001_to_06_batch_00012.rkyv` (from size 5 batch 1, creates size 6 batch 12)
+  - **5-digit batch numbers** for scalability (supports up to 99,999 batches)
+  - **Continuous output batch numbering**: Output batch counter never resets across source files
+  - When restarting, automatically continues from the highest existing batch number
   - Each input batch creates independent set of output batches
   - Unified filename helpers as single source of truth for consistency
 - **Per-file statistics**: Detailed logging of input/output counts per batch file
@@ -27,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Uses wildcard pattern `*_to_{size}_batch_{batch}.rkyv` to find input files
 - **Restart baseline counting**: Correctly parses source batch numbers from filenames
   - Counts outputs created from source batches < restart batch (allows reprocessing)
+- **Naming collision prevention**: Output batches numbered continuously to avoid confusion
+  - Old: `nsl_05_batch_000_to_06_batch_005` and `nsl_05_batch_001_to_06_batch_005` would collide
+  - New: `nsl_05_batch_00000_to_06_batch_00005` followed by `nsl_05_batch_00001_to_06_batch_00017`
 
 ### Changed
 

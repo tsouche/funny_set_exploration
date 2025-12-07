@@ -27,11 +27,11 @@ use crate::no_set_list::*;
 pub struct ListOfNSL {
     pub current_size: u8,              // # of cards in the current no-set-lists
     pub current: Vec<NoSetList>,       // current n-lists (stack-based for computation)
-    pub current_file_batch: u16,       // Current input file batch number
+    pub current_file_batch: u32,       // Current input file batch number (5 digits)
     pub current_file_list_count: u64,  // Lists loaded from current input file
     pub current_total_list_count: u64, // Total lists processed across all input files
     pub new: Vec<NoSetList>,           // newly created n+1-lists (stack-based during compute)
-    pub new_output_batch: u16,         // Current output file batch for this input
+    pub new_output_batch: u32,         // Current output file batch - CONTINUOUS across all source files
     pub new_file_list_count: u64,      // Lists saved to current output file
     pub new_total_list_count: u64,     // Total lists created for target size
     pub base_path: String,             // base directory for saving/loading files
@@ -198,7 +198,7 @@ impl ListOfNSL {
         let filename = match find_input_filename(&self.base_path, self.current_size, self.current_file_batch) {
             Some(f) => f,
             None => {
-                debug_print(&format!("refill_current_from_file: No file found for size {:02} batch {:03}",
+                debug_print(&format!("refill_current_from_file: No file found for size {:02} batch {:05}",
                     self.current_size, self.current_file_batch));
                 return false;
             }
@@ -290,8 +290,7 @@ impl ListOfNSL {
             of no-set-{:02} ({} lists)", self.current_file_batch, self.current_size, 
             self.current.len()));
         
-        // Reset output counters for this input file
-        self.new_output_batch = 0;
+        // Don't reset new_output_batch - keep continuous numbering across all source files
         let file_new_count_start = self.new_total_list_count;
         
         let len = self.current.len() as u64;
@@ -338,7 +337,7 @@ impl ListOfNSL {
         
         // Calculate and log this file's statistics
         let file_new_total = self.new_total_list_count - file_new_count_start;
-        test_print(&format!("   ... processed {} input lists, created {} new lists from batch {:03}",
+        test_print(&format!("   ... processed {} input lists, created {} new lists from batch {:05}",
             self.current_file_list_count.separated_string(),
             file_new_total.separated_string(),
             self.current_file_batch));
@@ -415,7 +414,7 @@ impl ListOfNSL {
     
     /// Process files starting from a specific batch number (for restart capability)
     /// Used to resume processing after interruption
-    pub fn process_from_batch(&mut self, current_size: u8, start_batch: u16, max: &u64) -> u64 {
+    pub fn process_from_batch(&mut self, current_size: u8, start_batch: u32, max: &u64) -> u64 {
         if current_size < 3 {
             debug_print("process_from_batch: size must be >= 3");
             return 0;
@@ -439,17 +438,17 @@ impl ListOfNSL {
         self.current_file_list_count = 0;
         self.current_total_list_count = 0;
         self.new.clear();
-        self.new_output_batch = 0;
         self.new_file_list_count = 0;
         
         // Count existing output files created before start_batch
-        // This gives us the baseline count from previous runs
-        let existing_count = count_existing_output_files_before_batch(
+        // This gives us the baseline count and next available batch number
+        let (existing_count, next_batch) = count_existing_output_files_before_batch(
             &self.base_path,
             self.current_size + 1,
             start_batch
         );
         self.new_total_list_count = existing_count;
+        self.new_output_batch = next_batch;  // Continue numbering from where we left off
         
         // Process files starting from start_batch
         loop {
@@ -518,16 +517,17 @@ pub fn created_a_total_of(nb: u64, size: u8, elapsed_secs: f64) {
 /// - Size 5 output from input batch 0: nsl_04_batch_000_to_05_batch_{000,001,002...}.rkyv
 
 /// Generate output filename when saving
+/// Uses 5-digit batch numbers for scalability
 fn output_filename(
     base_path: &str,
     source_size: u8,
-    source_batch: u16,
+    source_batch: u32,
     target_size: u8,
-    target_batch: u16
+    target_batch: u32
 ) -> String {
     use std::path::Path;
     let filename = format!(
-        "nsl_{:02}_batch_{:03}_to_{:02}_batch_{:03}.rkyv",
+        "nsl_{:02}_batch_{:05}_to_{:02}_batch_{:05}.rkyv",
         source_size, source_batch, target_size, target_batch
     );
     let path = Path::new(base_path).join(filename);
@@ -539,11 +539,11 @@ fn output_filename(
 fn find_input_filename(
     base_path: &str,
     target_size: u8,
-    target_batch: u16
+    target_batch: u32
 ) -> Option<String> {
     use std::fs;
     
-    let pattern = format!("_to_{:02}_batch_{:03}.rkyv", target_size, target_batch);
+    let pattern = format!("_to_{:02}_batch_{:05}.rkyv", target_size, target_batch);
     
     let entries = fs::read_dir(base_path).ok()?;
     
@@ -559,18 +559,20 @@ fn find_input_filename(
 }
 
 /// Count existing output files before a specific batch (for restart mode)
-/// Counts files matching: nsl_*_to_{target_size}_batch_{batch}.rkyv where batch < restart_batch
+/// Counts files matching: nsl_*_to_{target_size}_batch_{batch}.rkyv where source batch < restart_batch
+/// Returns: (total_lists_count, next_available_batch_number)
 fn count_existing_output_files_before_batch(
     base_path: &str,
     target_size: u8,
-    restart_batch: u16
-) -> u64 {
+    restart_batch: u32
+) -> (u64, u32) {
     use std::fs;
     let mut total = 0u64;
+    let mut max_target_batch: Option<u32> = None;
     
     let entries = match fs::read_dir(base_path) {
         Ok(e) => e,
-        Err(_) => return 0,
+        Err(_) => return (0, 0),
     };
     
     let pattern_prefix = format!("_to_{:02}_batch_", target_size);
@@ -580,15 +582,26 @@ fn count_existing_output_files_before_batch(
             // Check if this is an output file for our target size
             if name.starts_with("nsl_") && name.contains(&pattern_prefix) && name.ends_with(".rkyv") {
                 // Extract the SOURCE batch number from filename
-                // Format: nsl_XX_batch_YYY_to_ZZ_batch_BBB.rkyv
-                // We need YYY (the source batch), not BBB (the target batch)
+                // Format: nsl_XX_batch_YYYYY_to_ZZ_batch_BBBBB.rkyv
                 if let Some(to_pos) = name.find("_to_") {
                     let before_to = &name[..to_pos];
                     if let Some(batch_pos) = before_to.rfind("_batch_") {
                         let batch_str = &before_to[batch_pos + 7..];
-                        if let Ok(source_batch_num) = batch_str.parse::<u16>() {
+                        if let Ok(source_batch_num) = batch_str.parse::<u32>() {
                             // Only count files created from source batches < restart_batch
                             if source_batch_num < restart_batch {
+                                // Also extract target batch number
+                                let after_to = &name[to_pos + 4..];
+                                if let Some(target_batch_pos) = after_to.rfind("_batch_") {
+                                    let target_batch_str = &after_to[target_batch_pos + 7..after_to.len() - 5]; // -5 for ".rkyv"
+                                    if let Ok(target_batch_num) = target_batch_str.parse::<u32>() {
+                                        // Track maximum target batch number
+                                        max_target_batch = Some(
+                                            max_target_batch.map_or(target_batch_num, |current_max| current_max.max(target_batch_num))
+                                        );
+                                    }
+                                }
+                                
                                 let path = entry.path();
                                 if let Some(vec_nlist) = read_from_file_serialized(path.to_str().unwrap()) {
                                     let count = vec_nlist.len() as u64;
@@ -606,9 +619,10 @@ fn count_existing_output_files_before_batch(
         }
     }
     
-    debug_print(&format!("count_existing_output_files_before_batch: total {} entries for size {:02} before batch {:03}",
-        total, target_size, restart_batch));
-    total
+    let next_batch = max_target_batch.map_or(0, |max| max + 1);
+    debug_print(&format!("count_existing_output_files_before_batch: total {} entries for size {:02} before batch {:05}, next batch = {:05}",
+        total, target_size, restart_batch, next_batch));
+    (total, next_batch)
 }
 
 /// Save NoSetListSerialized vector to file using rkyv

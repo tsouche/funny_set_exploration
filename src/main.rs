@@ -54,7 +54,7 @@ struct Args {
     /// 
     /// This allows resuming processing after interruption
     #[arg(long, num_args = 2, value_names = ["SIZE", "BATCH"])]
-    restart: Option<Vec<u16>>,
+    restart: Option<Vec<u32>>,
 
     /// Output directory path (optional)
     /// 
@@ -137,7 +137,7 @@ fn main() {
             std::process::exit(1);
         }
         let size = restart_vec[0] as u8;
-        let batch = restart_vec[1];
+        let batch = restart_vec[1];  // u32 for 5-digit batch numbers
         if size < 4 || size > 18 {
             eprintln!("Error: Restart size {} out of range (4-18)", size);
             std::process::exit(1);
