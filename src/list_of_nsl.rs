@@ -325,6 +325,7 @@ impl ListOfNSL {
         self.current_file_count = 0;
         self.new.clear();
         self.new_file_count = 0;
+        self.new_list_count = 0;
         
         // Process all files
         loop {
