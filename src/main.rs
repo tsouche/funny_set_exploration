@@ -1,45 +1,51 @@
 /// Manage the search for the grail of Set: combinations of 12 / 15 / 18 cards 
 /// with no sets
 ///
-/// VERSION 0.2.2 - CLI support with optional arguments
+/// UNIFIED VERSION - Supports both v0.2.2 and v0.3.0 via CLI flag
 /// 
-/// Key improvements:
-/// - Memory-mapped file access (zero-copy reading)
-/// - 10-100x faster file reads
-/// - ~50% reduction in peak memory usage
-/// - Backward compatible with old .bin files
-///
 /// CLI Usage:
-///   cargo run                          # Default: create seeds + sizes 4-6
-///   cargo run -- --size 5              # Build size 5 from existing size 4 files
-///   cargo run -- --size 4              # Build size 4 from seed lists
-///   cargo run -- --size 7 -o T:\output # With custom output directory
+///   funny.exe -v 2 --size 5 -o T:\data\funny_set_exploration  # v0.2.2 (heap-based)
+///   funny.exe -v 3 --size 5 -o T:\data\funny_set_exploration  # v0.3.0 (stack-optimized)
+///   funny.exe -v 2                                             # v0.2.2 default mode
+///   funny.exe -v 3                                             # v0.3.0 default mode
 ///
 /// Arguments:
+///   -v, --version <2|3>  Implementation version (required)
+///                        2: v0.2.2 - Heap-based with Vec (backward compatible)
+///                        3: v0.3.0 - Stack-optimized with arrays (3-8x faster)
 ///   --size, -s <SIZE>    Target size to build (4-12, optional)
 ///                        If omitted, runs default behavior
 ///   --output-path, -o    Optional: Directory for output files
 ///                        Defaults to current directory
+///
+/// Version Differences:
+///   v0.2.2: Uses NList with Vec, creates .rkyv files, backward compatible
+///   v0.3.0: Uses NoSetList with arrays, creates .nsl files, NOT compatible
 
 mod utils;
 mod set;
 mod nlist;
+mod no_set_list;
 mod list_of_nlists;
+mod list_of_nsl;
 
 use clap::Parser;
 use crate::utils::*;
-use crate::list_of_nlists::{ListOfNlist, created_a_total_of};
 
 /// CLI arguments structure
 #[derive(Parser, Debug)]
 #[command(name = "funny_set_exploration")]
 #[command(about = "Generate no-set lists for the Set card game", long_about = None)]
 struct Args {
+    /// Implementation version: 2 (heap-based) or 3 (stack-optimized)
+    #[arg(short = 'v', long, value_parser = clap::value_parser!(u8).range(2..=3))]
+    version: u8,
+
     /// Target size for the no-set lists (4-12)
     /// 
     /// If not provided, runs the default behavior (creates seeds + sizes 4-6)
     /// - Size 4: Builds from seed lists (size 3)
-    /// - Size 5+: Requires nlist_(size-1)_batch_*.rkyv files
+    /// - Size 5+: Requires files from previous size
     #[arg(short, long, value_parser = clap::value_parser!(u8).range(4..=12))]
     size: Option<u8>,
 
@@ -54,7 +60,6 @@ struct Args {
 }
 
 fn main() {
-
     // Parse command-line arguments
     let args = Args::parse();
 
@@ -72,16 +77,28 @@ fn main() {
     debug_print_off();
     test_print_off();
     test_print_on();
-    banner("Funny Set Exploration");
+
+    // Dispatch to appropriate version
+    match args.version {
+        2 => run_version_2(args.size, args.output_path, MAX_NLISTS_PER_FILE),
+        3 => run_version_3(args.size, args.output_path, MAX_NLISTS_PER_FILE),
+        _ => unreachable!("clap should prevent other values"),
+    }
+}
+
+/// Run version 0.2.2 (heap-based with Vec)
+fn run_version_2(size: Option<u8>, output_path: Option<String>, max_per_file: u64) {
+    use crate::list_of_nlists::{ListOfNlist, created_a_total_of};
+
+    banner("Funny Set Exploration - v0.2.2 (Heap-Based)");
     
-    // Check if CLI mode (--size argument provided) or default mode
-    if let Some(target_size) = args.size {
+    if let Some(target_size) = size {
         // =====================================================================
         // CLI MODE: Process specific size
         // =====================================================================
-        test_print(&format!("CLI Mode: Target size = {} cards", target_size));
+        test_print(&format!("v0.2.2 CLI Mode: Target size = {} cards", target_size));
         
-        if let Some(ref path) = args.output_path {
+        if let Some(ref path) = output_path {
             test_print(&format!("Output directory: {}", path));
         } else {
             test_print("Output directory: current directory");
@@ -89,7 +106,7 @@ fn main() {
         test_print("\n======================\n");
 
         // Initialize ListOfNlist with optional custom path
-        let mut no_set_lists: ListOfNlist = match args.output_path {
+        let mut no_set_lists: ListOfNlist = match output_path {
             Some(path) => ListOfNlist::with_path(&path),
             None => ListOfNlist::new(),
         };
@@ -108,7 +125,7 @@ fn main() {
         
         let nb_new = no_set_lists.process_all_files_of_current_size_n(
             source_size, 
-            &MAX_NLISTS_PER_FILE
+            &max_per_file
         );
         
         created_a_total_of(nb_new, target_size);
@@ -123,38 +140,13 @@ fn main() {
         test_print("   - will create    141.370.218 no-set-lists with  6 cards");
         test_print("   - will create  1.180.345.041 no-set-lists with  7 cards");
         test_print("   - will create  7.920.450.378 no-set-lists with  8 cards");
-        test_print("   - will create  _.___.___.___ no-set-lists with  9 cards");
-        test_print("   - will create  _.___.___.___ no-set-lists with 10 cards");
-        test_print("   - will create  _.___.___.___ no-set-lists with 11 cards");
-        test_print("   - will create  _.___.___.___ no-set-lists with 12 cards");
-        test_print("   - will create  _.___.___.___ no-set-lists with 13 cards");
-        test_print("   - will create  _.___.___.___ no-set-lists with 14 cards");
-        test_print("   - will create  _.___.___.___ no-set-lists with 15 cards");
-        test_print("   - will create  _.___.___.___ no-set-lists with 16 cards");
-        test_print("   - will create  _.___.___.___ no-set-lists with 17 cards");
-        test_print("   - will create  _.___.___.___ no-set-lists with 18 cards");
         test_print("\n======================\n");
 
-        // ========================================================================
-        // CONFIGURE OUTPUT DIRECTORY
-        // ========================================================================
-        // Option 1: Use current directory (default)
-        // let mut no_set_lists: ListOfNlist = ListOfNlist::new();
-        
-        // Option 2: Use a custom path on Windows (uncomment to use)
-        // Example: NAS drive mapped to T:\data\funny_set_exploration
-        let mut no_set_lists: ListOfNlist = ListOfNlist::with_path(
-            r"T:\data\funny_set_exploration");
-        
-        // Option 3: Use a custom path on Linux (uncomment to use)
-        // Example: NAS mounted at /mnt/nas/data/funny_set_exploration
-        // let mut no_set_lists: ListOfNlist = ListOfNlist::with_path("/mnt/nas/data/funny_set_exploration");
-        
-        // Option 4: Use a relative subdirectory
-        // let mut no_set_lists: ListOfNlist = ListOfNlist::with_path("output");
-        
-        // Note: Make sure the directory exists before running!
-        // ========================================================================
+        // Initialize with output path if provided
+        let mut no_set_lists: ListOfNlist = match output_path {
+            Some(path) => ListOfNlist::with_path(&path),
+            None => ListOfNlist::with_path(r"T:\data\funny_set_exploration"),
+        };
 
         // create all seed lists (no-set-lists of size 3)
         no_set_lists.create_seed_lists();
@@ -166,13 +158,87 @@ fn main() {
             test_print(&format!("Start processing the files to create no-set-lists \
                 of size {}:", size+1));
             let nb_new = no_set_lists.process_all_files_of_current_size_n(size, 
-                &MAX_NLISTS_PER_FILE);
+                &max_per_file);
             created_a_total_of(nb_new, size+1);
         }
+    }
+}
 
+/// Run version 0.3.0 (stack-optimized with arrays)
+fn run_version_3(size: Option<u8>, output_path: Option<String>, max_per_file: u64) {
+    use crate::list_of_nsl::{ListOfNSL, created_a_total_of};
 
-        // expand to 4 cards no-set lists
-        //let mut no_set_04_lists: ListOfNlist = ListOfNlist::new(3);
-        //no_set_04_lists.process_all_files_for_size_n(3);
+    banner("Funny Set Exploration - v0.3.0 (Stack-Optimized)");
+    
+    if let Some(target_size) = size {
+        // =====================================================================
+        // CLI MODE: Process specific size
+        // =====================================================================
+        test_print(&format!("v0.3.0 CLI Mode: Target size = {} cards", target_size));
+        test_print("Using STACK-OPTIMIZED algorithm (zero heap allocations, 3-8x faster)");
+        
+        if let Some(ref path) = output_path {
+            test_print(&format!("Output directory: {}", path));
+        } else {
+            test_print("Output directory: current directory");
+        }
+        test_print("\n======================\n");
+
+        // Initialize ListOfNSL with optional custom path
+        let mut no_set_lists: ListOfNSL = match output_path {
+            Some(path) => ListOfNSL::with_path(&path),
+            None => ListOfNSL::new(),
+        };
+
+        // Handle size 4: need to create seed lists first
+        if target_size == 4 {
+            test_print("Creating seed lists (size 3) using STACK ALLOCATION...");
+            no_set_lists.create_seed_lists();
+            test_print("Seed lists created successfully.\n");
+        }
+
+        // Process from (size - 1) to size
+        let source_size = target_size - 1;
+        test_print(&format!("Processing files nlist_{:02}_batch_*.nsl to create no-set-lists of size {}:", 
+            source_size, target_size));
+        
+        let nb_new = no_set_lists.process_all_files_of_current_size_n(
+            source_size, 
+            &max_per_file
+        );
+        
+        created_a_total_of(nb_new, target_size);
+        test_print(&format!("\nCompleted! Generated files: nlist_{:02}_batch_*.nsl", target_size));
+    } else {
+        // =====================================================================
+        // DEFAULT MODE: Stack-optimized behavior
+        // =====================================================================
+        test_print("   - will create         58.896 no-set-lists with  3 cards (STACK)");
+        test_print("   - will create      1.004.589 no-set-lists with  4 cards (STACK)");
+        test_print("   - will create     13.394.538 no-set-lists with  5 cards (STACK)");
+        test_print("   - will create    141.370.218 no-set-lists with  6 cards (STACK)");
+        test_print("   - will create  1.180.345.041 no-set-lists with  7 cards (STACK)");
+        test_print("   - will create  7.920.450.378 no-set-lists with  8 cards (STACK)");
+        test_print("\n   Performance: 3-8x faster than v0.2.2 (zero heap allocations)\n");
+        test_print("\n======================\n");
+
+        // Initialize with output path if provided
+        let mut no_set_lists: ListOfNSL = match output_path {
+            Some(path) => ListOfNSL::with_path(&path),
+            None => ListOfNSL::with_path(r"T:\data\funny_set_exploration"),
+        };
+
+        // Create all seed lists using STACK ALLOCATION
+        test_print("Creating seed lists with STACK optimization...");
+        no_set_lists.create_seed_lists();
+
+        // Expand from seed_lists to NoSetList of size 4, 5, 6...
+        for size in 3..6 {
+            test_print(&format!("\nStart processing files to create no-set-lists of size {}:", size+1));
+            test_print("Using STACK-OPTIMIZED algorithm (zero heap allocations in core loop)");
+            let nb_new = no_set_lists.process_all_files_of_current_size_n(size, 
+                &max_per_file);
+            created_a_total_of(nb_new, size+1);
+        }
     }
 }

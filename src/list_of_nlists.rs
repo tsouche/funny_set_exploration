@@ -355,7 +355,7 @@ fn filename(base_path: &str, size: u8, batch_number: u16) -> String {
     return path.to_string_lossy().to_string();
 }
 
-/// Generate filename for legacy bincode format (backward compatibility)
+// Generate filename for legacy bincode format (backward compatibility)
 //fn filename_bincode(base_path: &str, size: u8, batch_number: u16) -> String {
 //    use std::path::Path;
 //    let filename = format!("nlist_{:02}_batch_{:03}.bin", size, batch_number);
