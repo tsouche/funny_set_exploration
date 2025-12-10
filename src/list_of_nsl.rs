@@ -632,16 +632,16 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
     writeln!(report_file, "# Format: source_batch target_batch | cumulative_nb_lists | nb_lists_in_file | filename")?;
     writeln!(report_file, "#")?;
     
-    // Sort by target_batch (descending), then source_batch (descending)
+    // Sort by target_batch (ascending), then source_batch (ascending) for cumulative calculation
     let mut sorted_files: Vec<_> = file_info.iter().collect();
     sorted_files.sort_by(|a, b| {
-        match b.0.1.cmp(&a.0.1) { // target_batch descending
-            std::cmp::Ordering::Equal => b.0.0.cmp(&a.0.0), // source_batch descending
+        match a.0.1.cmp(&b.0.1) { // target_batch ascending
+            std::cmp::Ordering::Equal => a.0.0.cmp(&b.0.0), // source_batch ascending
             other => other,
         }
     });
     
-    // Calculate cumulative totals (from highest to lowest batch)
+    // Calculate cumulative totals (from lowest to highest batch)
     let mut cumulative = 0u64;
     let mut report_lines = Vec::new();
     
@@ -657,8 +657,8 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
         ));
     }
     
-    // Write lines (still in descending order)
-    for line in &report_lines {
+    // Write lines in REVERSE order (highest batch first, lowest last)
+    for line in report_lines.iter().rev() {
         writeln!(report_file, "{}", line)?;
     }
     
