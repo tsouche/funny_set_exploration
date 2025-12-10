@@ -43,25 +43,40 @@ struct Args {
     /// - Range: "5-7" builds sizes 5, 6, and 7 sequentially
     /// - Size 4: Builds from seed lists (size 3)
     /// - Size 5+: Requires files from previous size
-    #[arg(short, long, conflicts_with = "restart")]
+    #[arg(short, long, conflicts_with_all = ["restart", "replay"])]
     size: Option<String>,
 
     /// Restart from specific input file: <SIZE> <BATCH>
     /// 
+    /// SIZE refers to the INPUT size. Processes from this batch onwards.
+    /// 
     /// Examples:
-    ///   --restart 5 2   Restart from size 5, batch 2, continue through size 18
-    ///   --restart 7 0   Restart from size 7, batch 0 (first file)
+    ///   --restart 5 2   Load input size 5 batch 2, continue through size 18
+    ///   --restart 7 0   Load input size 7 batch 0, continue through size 18
     /// 
     /// By default, reads baseline counts from audit file (size_XX_count.txt).
     /// Use --force to regenerate audit file by scanning all files.
-    #[arg(long, num_args = 2, value_names = ["SIZE", "BATCH"], conflicts_with_all = ["size", "audit"])]
+    #[arg(long, num_args = 2, value_names = ["SIZE", "BATCH"], conflicts_with_all = ["size", "audit", "replay"])]
     restart: Option<Vec<u32>>,
 
-    /// Force regeneration of audit file when using --restart
+    /// Replay processing for a single input batch: <SIZE> <BATCH>
     /// 
-    /// By default, restart mode reads the existing audit file for baseline counts.
+    /// SIZE refers to the INPUT size. Processes ONLY this specific batch.
+    /// Output files from this batch will be regenerated.
+    /// 
+    /// Examples:
+    ///   --replay 5 2    Reprocess input size 5 batch 2 only (creates size 6 outputs)
+    ///   --replay 7 0    Reprocess input size 7 batch 0 only (creates size 8 outputs)
+    /// 
+    /// Use --force to regenerate audit file first (recalculates baseline).
+    #[arg(long, num_args = 2, value_names = ["SIZE", "BATCH"], conflicts_with_all = ["size", "audit", "restart"])]
+    replay: Option<Vec<u32>>,
+
+    /// Force regeneration of audit file when using --restart or --replay
+    /// 
+    /// By default, restart/replay modes read the existing audit file for baseline counts.
     /// This flag forces a full file scan to regenerate the audit file first.
-    #[arg(long, requires = "restart")]
+    #[arg(long)]
     force: bool,
 
     /// Audit existing files for a specific size and create count summary
@@ -71,7 +86,7 @@ struct Args {
     /// 
     /// This scans all files, counts lists, and creates a summary report
     /// without processing any new lists
-    #[arg(long, conflicts_with_all = ["size", "restart"])]
+    #[arg(long, conflicts_with_all = ["size", "restart", "replay"])]
     audit: Option<u8>,
 
     /// Output directory path (optional)
@@ -158,6 +173,23 @@ fn main() {
         let batch = restart_vec[1];  // u32 for 5-digit batch numbers
         if size < 4 || size > 18 {
             eprintln!("Error: Restart size {} out of range (4-18)", size);
+            std::process::exit(1);
+        }
+        Some((size, batch))
+    } else {
+        None
+    };
+
+    // Parse replay parameters if provided
+    let replay_params = if let Some(ref replay_vec) = args.replay {
+        if replay_vec.len() != 2 {
+            eprintln!("Error: --replay requires exactly 2 arguments: SIZE BATCH");
+            std::process::exit(1);
+        }
+        let size = replay_vec[0] as u8;
+        let batch = replay_vec[1];  // u32 for 5-digit batch numbers
+        if size < 3 || size > 17 {
+            eprintln!("Error: Replay size {} out of range (3-17)", size);
             std::process::exit(1);
         }
         Some((size, batch))
@@ -257,6 +289,52 @@ fn main() {
             
             test_print(&format!("\nCompleted size {}!\n", target_size));
         }
+    } else if let Some((replay_size, replay_batch)) = replay_params {
+        // =====================================================================
+        // REPLAY MODE: Reprocess a single input batch
+        // =====================================================================
+        test_print(&format!("REPLAY MODE: Reprocessing input size {} batch {}", replay_size, replay_batch));
+        test_print(&format!("Output: size {} files", replay_size + 1));
+        test_print("Strategy: Stack computation + Heap I/O");
+        test_print(&format!("Batch size: {} entries/file (~2GB, compact)", MAX_NLISTS_PER_FILE.separated_string()));
+        
+        let base_path = if let Some(ref path) = args.output_path {
+            test_print(&format!("Output directory: {}", path));
+            path.as_str()
+        } else {
+            test_print("Output directory: current directory");
+            "."
+        };
+        
+        // If force flag is set, regenerate audit file for target size
+        if args.force {
+            test_print(&format!("\nFORCE MODE: Regenerating audit file for size {}...", replay_size + 1));
+            match audit_size_files(base_path, replay_size + 1) {
+                Ok(()) => test_print("Audit file regenerated successfully\n"),
+                Err(e) => {
+                    eprintln!("Error regenerating audit file: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        
+        test_print("\n======================\n");
+
+        // Initialize ListOfNSL with optional custom path
+        let mut no_set_lists: ListOfNSL = match args.output_path {
+            Some(path) => ListOfNSL::with_path(&path),
+            None => ListOfNSL::new(),
+        };
+
+        // Process only the specified batch
+        test_print(&format!("Reprocessing input size {} batch {}:", replay_size, replay_batch));
+        let _nb_new = no_set_lists.replay_single_batch(
+            replay_size,
+            replay_batch,
+            &MAX_NLISTS_PER_FILE
+        );
+        
+        test_print(&format!("\nReplay completed for size {} batch {}!\n", replay_size, replay_batch));
     } else if let Some((start_size, end_size)) = size_range {
         // =====================================================================
         // CLI MODE: Process size range

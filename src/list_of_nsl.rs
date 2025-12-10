@@ -487,6 +487,78 @@ impl ListOfNSL {
         
         self.new_total_list_count
     }
+    
+    /// Replay processing for a single input batch
+    /// Reprocesses one specific input file and regenerates its output files
+    pub fn replay_single_batch(&mut self, input_size: u8, input_batch: u32, max: &u64) -> u64 {
+        if input_size < 3 {
+            debug_print("replay_single_batch: input size must be >= 3");
+            return 0;
+        }
+        
+        debug_print(&format!("replay_single_batch: reprocessing input size {:02} batch {:05}", 
+            input_size, input_batch));
+        
+        // Start timing
+        let start_time = std::time::Instant::now();
+        
+        // Reset timing counters
+        self.computation_time = 0.0;
+        self.file_io_time = 0.0;
+        self.conversion_time = 0.0;
+        
+        // Initialize for this size
+        self.current_size = input_size;
+        self.current.clear();
+        self.current_file_batch = input_batch;
+        self.current_file_list_count = 0;
+        self.current_total_list_count = 0;
+        self.new.clear();
+        self.new_file_list_count = 0;
+        
+        // Read baseline from audit file (files from batches < input_batch)
+        let (existing_count, next_batch) = read_baseline_from_audit_file(
+            &self.base_path,
+            self.current_size + 1,
+            input_batch
+        );
+        self.new_total_list_count = existing_count;
+        self.new_output_batch = next_batch;  // Start from next available batch
+        
+        test_print(&format!("   ... will create output starting from batch {:05}", next_batch));
+        
+        // Load the single input batch
+        let loaded = self.refill_current_from_file();
+        if !loaded {
+            test_print(&format!("   ... ERROR: Could not load input file for size {:02} batch {:05}",
+                input_size, input_batch));
+            return 0;
+        }
+        
+        debug_print(&format!("replay_single_batch: loaded {} n-lists", self.current.len()));
+        
+        // Process this single batch
+        let created_count = self.process_one_file_of_current_size_n(max);
+        
+        let elapsed = start_time.elapsed();
+        let elapsed_secs = elapsed.as_secs_f64();
+        let overhead = elapsed_secs - self.computation_time - self.file_io_time - self.conversion_time;
+        
+        debug_print(&format!("replay_single_batch: Finished reprocessing size {:02} batch {:05}", 
+            input_size, input_batch));
+        
+        // Report total with breakdown
+        test_print(&format!("   ... created {:>17} new no-set-{:02} lists from this batch",
+            created_count.separated_string(), self.current_size + 1));
+        test_print(&format!("   ... timing: computation {:.2}s ({:.1}%), I/O {:.2}s ({:.1}%), \
+            conversion {:.2}s ({:.1}%), overhead {:.2}s ({:.1}%)",
+            self.computation_time, (self.computation_time / elapsed_secs * 100.0),
+            self.file_io_time, (self.file_io_time / elapsed_secs * 100.0),
+            self.conversion_time, (self.conversion_time / elapsed_secs * 100.0),
+            overhead, (overhead / elapsed_secs * 100.0)));
+        
+        created_count
+    }
 }
 
 impl Default for ListOfNSL {

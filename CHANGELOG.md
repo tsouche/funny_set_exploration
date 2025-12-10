@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Replay mode**: New `--replay <SIZE> <BATCH>` command to reprocess a single input batch
+  - SIZE refers to INPUT size (same as restart semantics)
+  - Reprocesses only the specified batch, regenerating its output files
+  - Example: `--replay 5 2` reprocesses input size 5 batch 2 (creates size 6 outputs)
+  - Uses audit file for baseline (like restart mode)
+  - Supports `--force` flag to regenerate audit file first
+  - Useful for fixing corrupted output files or after algorithm changes
 - **Audit mode**: New `--audit <SIZE>` command to count existing files without processing
   - Scans all output files for a given target size
   - Counts lists in each file
