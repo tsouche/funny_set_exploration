@@ -595,11 +595,19 @@ impl Default for ListOfNSL {
 /// Number of files to process in each batch for count mode
 const COUNT_BATCH_SIZE: usize = 10;
 
+/// Count files for a given target size and create summary report
+/// 
+/// File naming:
+/// - Intermediary files: no_set_list_intermediate_count_{target_size:02}_{batch_idx:03}.txt
+/// - Final report: no_set_list_count_{target_size:02}.txt
+/// 
+/// Both are stored in the same directory as the source files (input_path)
 pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()> {
     use std::fs;
     use std::path::PathBuf;
     
     test_print(&format!("\nCounting files for size {:02}...", target_size));
+    test_print(&format!("   Input directory: {}", base_path));
     
     let start_time = std::time::Instant::now();
     
@@ -610,6 +618,7 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
     let mut all_files: Vec<PathBuf> = Vec::new();
     for entry in entries.flatten() {
         if let Some(name) = entry.file_name().to_str() {
+            // Match both regular files (nsl_XX_batch_*) and seed files (nsl_00_batch_*)
             if name.starts_with("nsl_") && name.contains(&pattern) && name.ends_with(".rkyv") {
                 all_files.push(entry.path());
             }
@@ -632,7 +641,7 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
     let mut batches_processed = 0usize;
     
     for (batch_idx, chunk) in all_files.chunks(COUNT_BATCH_SIZE).enumerate() {
-        let intermediary_filename = format!("{}/count_intermediate_{:02}_{:03}.txt", 
+        let intermediary_filename = format!("{}/no_set_list_intermediate_count_{:02}_{:03}.txt", 
             base_path, target_size, batch_idx);
         
         // Check if intermediary file exists and is up-to-date
@@ -656,13 +665,8 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
     
     consolidate_count_files(&intermediary_files, base_path, target_size)?;
     
-    // Clean up intermediary files
-    test_print("   Cleaning up intermediary files...");
-    for intermediary_file in &intermediary_files {
-        if let Err(e) = fs::remove_file(intermediary_file) {
-            eprintln!("   Warning: Could not delete {}: {}", intermediary_file, e);
-        }
-    }
+    // Keep intermediary files for idempotency (don't delete them)
+    test_print("   Intermediary files kept for future idempotent runs");
     
     let elapsed = start_time.elapsed().as_secs_f64();
     test_print(&format!("\nCount completed in {:.2} seconds", elapsed));
@@ -787,6 +791,8 @@ fn consolidate_count_files(intermediary_files: &[String], base_path: &str, targe
     // Write header
     writeln!(report_file, "# File Count Summary for no-set-{:02} lists", target_size)?;
     writeln!(report_file, "# Generated: {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"))?;
+    writeln!(report_file, "# Input directory: {}", base_path)?;
+    writeln!(report_file, "# Intermediary files used: {} batch files", intermediary_files.len())?;
     writeln!(report_file, "# Format: source_batch target_batch | cumulative_nb_lists | nb_lists_in_file | filename")?;
     writeln!(report_file, "#")?;
     
