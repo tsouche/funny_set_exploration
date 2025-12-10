@@ -592,45 +592,146 @@ impl Default for ListOfNSL {
 
 /// Count all existing output files for a given target size
 /// Creates a summary report file with counts per batch
+/// Number of files to process in each batch for count mode
+const COUNT_BATCH_SIZE: usize = 10;
+
 pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()> {
+    use std::fs;
+    use std::path::PathBuf;
+    
+    test_print(&format!("\nCounting files for size {:02}...", target_size));
+    
+    let start_time = std::time::Instant::now();
+    
+    // Collect all matching files
+    let entries = fs::read_dir(base_path)?;
+    let pattern = format!("_to_{:02}_batch_", target_size);
+    
+    let mut all_files: Vec<PathBuf> = Vec::new();
+    for entry in entries.flatten() {
+        if let Some(name) = entry.file_name().to_str() {
+            if name.starts_with("nsl_") && name.contains(&pattern) && name.ends_with(".rkyv") {
+                all_files.push(entry.path());
+            }
+        }
+    }
+    
+    if all_files.is_empty() {
+        test_print(&format!("No files found for size {:02}", target_size));
+        return Ok(());
+    }
+    
+    test_print(&format!("   Found {} files to count", all_files.len()));
+    
+    // Process files in batches
+    let num_batches = (all_files.len() + COUNT_BATCH_SIZE - 1) / COUNT_BATCH_SIZE;
+    test_print(&format!("   Processing in {} batches of up to {} files each", num_batches, COUNT_BATCH_SIZE));
+    
+    let mut intermediary_files = Vec::new();
+    let mut batches_skipped = 0usize;
+    let mut batches_processed = 0usize;
+    
+    for (batch_idx, chunk) in all_files.chunks(COUNT_BATCH_SIZE).enumerate() {
+        let intermediary_filename = format!("{}/count_intermediate_{:02}_{:03}.txt", 
+            base_path, target_size, batch_idx);
+        
+        // Check if intermediary file exists and is up-to-date
+        if is_intermediary_file_valid(&intermediary_filename, chunk)? {
+            test_print(&format!("\n   Batch {}/{}: Skipping (intermediary file is up-to-date)", 
+                batch_idx + 1, num_batches));
+            batches_skipped += 1;
+        } else {
+            test_print(&format!("\n   Batch {}/{}: Processing {} files...", 
+                batch_idx + 1, num_batches, chunk.len()));
+            
+            process_count_batch(chunk, &intermediary_filename, target_size)?;
+            batches_processed += 1;
+        }
+        
+        intermediary_files.push(intermediary_filename);
+    }
+    
+    // Consolidate intermediary files into final report
+    test_print(&format!("\n   Consolidating {} intermediary files...", intermediary_files.len()));
+    
+    consolidate_count_files(&intermediary_files, base_path, target_size)?;
+    
+    // Clean up intermediary files
+    test_print("   Cleaning up intermediary files...");
+    for intermediary_file in &intermediary_files {
+        if let Err(e) = fs::remove_file(intermediary_file) {
+            eprintln!("   Warning: Could not delete {}: {}", intermediary_file, e);
+        }
+    }
+    
+    let elapsed = start_time.elapsed().as_secs_f64();
+    test_print(&format!("\nCount completed in {:.2} seconds", elapsed));
+    test_print(&format!("   Batches processed: {}", batches_processed));
+    test_print(&format!("   Batches skipped (up-to-date): {}", batches_skipped));
+    
+    Ok(())
+}
+
+/// Check if an intermediary file is valid (exists and is newer than all source files)
+fn is_intermediary_file_valid(intermediary_file: &str, source_files: &[std::path::PathBuf]) -> std::io::Result<bool> {
+    use std::fs;
+    
+    // Check if intermediary file exists
+    let intermediary_path = std::path::Path::new(intermediary_file);
+    if !intermediary_path.exists() {
+        return Ok(false);
+    }
+    
+    // Get intermediary file's modification time
+    let intermediary_metadata = fs::metadata(intermediary_path)?;
+    let intermediary_mtime = intermediary_metadata.modified()?;
+    
+    // Check if any source file is newer than the intermediary file
+    for source_file in source_files {
+        let source_metadata = fs::metadata(source_file)?;
+        let source_mtime = source_metadata.modified()?;
+        
+        if source_mtime > intermediary_mtime {
+            // Source file is newer, intermediary is stale
+            return Ok(false);
+        }
+    }
+    
+    // All source files are older than intermediary file
+    Ok(true)
+}
+
+/// Process a batch of files and write results to an intermediary file
+fn process_count_batch(files: &[std::path::PathBuf], output_file: &str, _target_size: u8) -> std::io::Result<()> {
     use std::fs;
     use std::io::Write;
     use std::collections::BTreeMap;
     
-    test_print(&format!("\nCounting files for size {:02}...", target_size));
-    
-    // Collect all files for this target size
     // Key: (source_batch, target_batch), Value: (filename, count)
     let mut file_info: BTreeMap<(u32, u32), (String, u64)> = BTreeMap::new();
     
-    let entries = fs::read_dir(base_path)?;
-    let pattern = format!("_to_{:02}_batch_", target_size);
-    
-    for entry in entries.flatten() {
-        if let Some(name) = entry.file_name().to_str() {
-            if name.starts_with("nsl_") && name.contains(&pattern) && name.ends_with(".rkyv") {
-                // Parse source and target batch numbers
-                // Format: nsl_XX_batch_YYYYY_to_ZZ_batch_BBBBB.rkyv
-                if let Some(to_pos) = name.find("_to_") {
-                    let before_to = &name[..to_pos];
-                    let after_to = &name[to_pos + 4..];
-                    
-                    // Extract source batch
-                    if let Some(src_batch_pos) = before_to.rfind("_batch_") {
-                        let src_batch_str = &before_to[src_batch_pos + 7..];
-                        if let Ok(source_batch) = src_batch_str.parse::<u32>() {
-                            // Extract target batch
-                            if let Some(tgt_batch_pos) = after_to.rfind("_batch_") {
-                                let tgt_batch_str = &after_to[tgt_batch_pos + 7..after_to.len() - 5]; // -5 for ".rkyv"
-                                if let Ok(target_batch) = tgt_batch_str.parse::<u32>() {
-                                    // Read file and count entries
-                                    let path = entry.path();
-                                    if let Some(vec_nlist) = read_from_file_serialized(path.to_str().unwrap()) {
-                                        let count = vec_nlist.len() as u64;
-                                        file_info.insert((source_batch, target_batch), (name.to_string(), count));
-                                        test_print(&format!("   ... counted {:>10} lists in {}",
-                                            count.separated_string(), name));
-                                    }
+    for path in files {
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            // Parse source and target batch numbers
+            // Format: nsl_XX_batch_YYYYY_to_ZZ_batch_BBBBB.rkyv
+            if let Some(to_pos) = name.find("_to_") {
+                let before_to = &name[..to_pos];
+                let after_to = &name[to_pos + 4..];
+                
+                // Extract source batch
+                if let Some(src_batch_pos) = before_to.rfind("_batch_") {
+                    let src_batch_str = &before_to[src_batch_pos + 7..];
+                    if let Ok(source_batch) = src_batch_str.parse::<u32>() {
+                        // Extract target batch
+                        if let Some(tgt_batch_pos) = after_to.rfind("_batch_") {
+                            let tgt_batch_str = &after_to[tgt_batch_pos + 7..after_to.len() - 5]; // -5 for ".rkyv"
+                            if let Ok(target_batch) = tgt_batch_str.parse::<u32>() {
+                                // Read file and count entries
+                                if let Some(vec_nlist) = read_from_file_serialized(path.to_str().unwrap()) {
+                                    let count = vec_nlist.len() as u64;
+                                    file_info.insert((source_batch, target_batch), (name.to_string(), count));
+                                    test_print(&format!("      ... {:>10} lists in {}",
+                                        count.separated_string(), name));
                                 }
                             }
                         }
@@ -640,12 +741,46 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
         }
     }
     
-    if file_info.is_empty() {
-        test_print(&format!("No files found for size {:02}", target_size));
-        return Ok(());
+    // Write intermediary file (simple format: source_batch target_batch count filename)
+    let mut file = fs::File::create(output_file)?;
+    for ((source_batch, target_batch), (filename, count)) in file_info.iter() {
+        writeln!(file, "{} {} {} {}", source_batch, target_batch, count, filename)?;
     }
     
-    // Create summary report file
+    Ok(())
+}
+
+/// Consolidate all intermediary count files into the final report
+fn consolidate_count_files(intermediary_files: &[String], base_path: &str, target_size: u8) -> std::io::Result<()> {
+    use std::fs;
+    use std::io::{BufRead, BufReader, Write};
+    use std::collections::BTreeMap;
+    
+    // Key: (source_batch, target_batch), Value: (filename, count)
+    let mut all_file_info: BTreeMap<(u32, u32), (String, u64)> = BTreeMap::new();
+    
+    // Read all intermediary files
+    for intermediary_file in intermediary_files {
+        let file = fs::File::open(intermediary_file)?;
+        let reader = BufReader::new(file);
+        
+        for line in reader.lines() {
+            let line = line?;
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 4 {
+                if let (Ok(src_batch), Ok(tgt_batch), Ok(count)) = (
+                    parts[0].parse::<u32>(),
+                    parts[1].parse::<u32>(),
+                    parts[2].parse::<u64>()
+                ) {
+                    let filename = parts[3].to_string();
+                    all_file_info.insert((src_batch, tgt_batch), (filename, count));
+                }
+            }
+        }
+    }
+    
+    // Create final summary report file
     let report_filename = format!("{}/no_set_list_count_{:02}.txt", base_path, target_size);
     let mut report_file = fs::File::create(&report_filename)?;
     
@@ -656,7 +791,7 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
     writeln!(report_file, "#")?;
     
     // Sort by target_batch (ascending), then source_batch (ascending) for cumulative calculation
-    let mut sorted_files: Vec<_> = file_info.iter().collect();
+    let mut sorted_files: Vec<_> = all_file_info.iter().collect();
     sorted_files.sort_by(|a, b| {
         match a.0.1.cmp(&b.0.1) { // target_batch ascending
             std::cmp::Ordering::Equal => a.0.0.cmp(&b.0.0), // source_batch ascending
@@ -687,11 +822,11 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
     
     // Write summary at the end
     writeln!(report_file, "#")?;
-    writeln!(report_file, "# Total files: {}", file_info.len())?;
+    writeln!(report_file, "# Total files: {}", all_file_info.len())?;
     writeln!(report_file, "# Total lists: {}", cumulative.separated_string())?;
     
-    test_print(&format!("\nSummary written to: {}", report_filename));
-    test_print(&format!("   Total files: {}", file_info.len()));
+    test_print(&format!("\n   Summary written to: {}", report_filename));
+    test_print(&format!("   Total files: {}", all_file_info.len()));
     test_print(&format!("   Total lists: {}", cumulative.separated_string()));
     
     Ok(())
