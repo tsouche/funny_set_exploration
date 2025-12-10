@@ -52,9 +52,17 @@ struct Args {
     ///   --restart 5 2   Restart from size 5, batch 2, continue through size 18
     ///   --restart 7 0   Restart from size 7, batch 0 (first file)
     /// 
-    /// This allows resuming processing after interruption
+    /// By default, reads baseline counts from audit file (size_XX_count.txt).
+    /// Use --force to regenerate audit file by scanning all files.
     #[arg(long, num_args = 2, value_names = ["SIZE", "BATCH"], conflicts_with_all = ["size", "audit"])]
     restart: Option<Vec<u32>>,
+
+    /// Force regeneration of audit file when using --restart
+    /// 
+    /// By default, restart mode reads the existing audit file for baseline counts.
+    /// This flag forces a full file scan to regenerate the audit file first.
+    #[arg(long, requires = "restart")]
+    force: bool,
 
     /// Audit existing files for a specific size and create count summary
     /// 
@@ -196,11 +204,26 @@ fn main() {
         test_print("Strategy: Stack computation + Heap I/O");
         test_print(&format!("Batch size: {} entries/file (~2GB, compact)", MAX_NLISTS_PER_FILE.separated_string()));
         
-        if let Some(ref path) = args.output_path {
+        let base_path = if let Some(ref path) = args.output_path {
             test_print(&format!("Output directory: {}", path));
+            path.as_str()
         } else {
             test_print("Output directory: current directory");
+            "."
+        };
+        
+        // If force flag is set, regenerate audit file for target size
+        if args.force {
+            test_print(&format!("\nFORCE MODE: Regenerating audit file for size {}...", restart_size + 1));
+            match audit_size_files(base_path, restart_size + 1) {
+                Ok(()) => test_print("Audit file regenerated successfully\n"),
+                Err(e) => {
+                    eprintln!("Error regenerating audit file: {}", e);
+                    std::process::exit(1);
+                }
+            }
         }
+        
         test_print("\n======================\n");
 
         // Initialize ListOfNSL with optional custom path

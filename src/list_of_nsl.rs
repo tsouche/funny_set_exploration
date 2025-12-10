@@ -440,9 +440,9 @@ impl ListOfNSL {
         self.new.clear();
         self.new_file_list_count = 0;
         
-        // Count existing output files created before start_batch
+        // Read baseline from audit file (or scan files if audit doesn't exist)
         // This gives us the baseline count and next available batch number
-        let (existing_count, next_batch) = count_existing_output_files_before_batch(
+        let (existing_count, next_batch) = read_baseline_from_audit_file(
             &self.base_path,
             self.current_size + 1,
             start_batch
@@ -611,6 +611,82 @@ pub fn created_a_total_of(nb: u64, size: u8, elapsed_secs: f64) {
     test_print(&format!("   ... created a total of {:>15} no-set-{:02} lists \
         in {:>10.2} seconds ({:02}h{:02}m{:02}s)", 
         nb.separated_string(), size, elapsed_secs, hours, minutes, seconds));
+}
+
+/// Read baseline counts from audit file instead of scanning all files
+/// Returns: (total_lists_count, next_available_batch_number)
+/// 
+/// If audit file doesn't exist, falls back to scanning files
+fn read_baseline_from_audit_file(
+    base_path: &str,
+    target_size: u8,
+    restart_batch: u32
+) -> (u64, u32) {
+    use std::fs;
+    use std::io::{BufRead, BufReader};
+    
+    let audit_filename = format!("{}/size_{:02}_count.txt", base_path, target_size);
+    
+    // Try to open audit file
+    let file = match fs::File::open(&audit_filename) {
+        Ok(f) => f,
+        Err(_) => {
+            test_print(&format!("   ... no audit file found ({}), scanning files...", audit_filename));
+            return count_existing_output_files_before_batch(base_path, target_size, restart_batch);
+        }
+    };
+    
+    test_print(&format!("   ... reading baseline from {}", audit_filename));
+    
+    let reader = BufReader::new(file);
+    let mut total_count = 0u64;
+    let mut max_batch: Option<u32> = None;
+    
+    for line in reader.lines().flatten() {
+        // Skip comments and empty lines
+        if line.starts_with('#') || line.trim().is_empty() {
+            continue;
+        }
+        
+        // Parse line format: "source_batch target_batch | lists_in_file | cumulative_total | filename"
+        let parts: Vec<&str> = line.split('|').collect();
+        if parts.len() >= 3 {
+            // Extract source_batch and target_batch from first part
+            let batch_parts: Vec<&str> = parts[0].trim().split_whitespace().collect();
+            if batch_parts.len() >= 2 {
+                if let (Ok(source_batch), Ok(target_batch)) = (
+                    batch_parts[0].parse::<u32>(),
+                    batch_parts[1].parse::<u32>()
+                ) {
+                    // Only count entries where source_batch < restart_batch
+                    if source_batch < restart_batch {
+                        // Extract count from second part (remove commas)
+                        let count_str = parts[1].trim().replace(',', "");
+                        if let Ok(count) = count_str.parse::<u64>() {
+                            total_count += count;
+                            // Track max target batch
+                            max_batch = Some(
+                                max_batch.map_or(target_batch, |current_max| current_max.max(target_batch))
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    let next_batch = max_batch.map_or(0, |max| max + 1);
+    
+    if total_count > 0 {
+        test_print(&format!("   ... found {:>17} existing lists from audit file",
+            total_count.separated_string()));
+        test_print(&format!("   ... next batch will be {:05}", next_batch));
+    }
+    
+    debug_print(&format!("read_baseline_from_audit_file: total {} entries for size {:02} before batch {:05}, next batch = {:05}",
+        total_count, target_size, restart_batch, next_batch));
+    
+    (total_count, next_batch)
 }
 
 /// Filename helper - single source of truth for all file naming

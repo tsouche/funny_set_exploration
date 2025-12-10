@@ -6,6 +6,11 @@ A Rust-based exhaustive search algorithm to find all combinations of 12, 15, and
 
 **Current Version:** 0.4.0 (December 2025)
 
+**Key Features:**
+- Restart capability with audit file support
+- 5-digit batch numbering for scalability
+- Continuous batch numbering across source files
+
 **Architecture:** Hybrid stack/heap implementation
 - **NoSetList** (stack arrays): Zero-allocation computation, 4-5× faster
 - **NoSetListSerialized** (heap Vec): Compact 2GB files with rkyv size_32

@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Useful for verifying counts and tracking progress
 - **Restart capability**: Resume processing from a specific input size and batch
   - New `--restart <SIZE> <BATCH>` CLI argument to resume interrupted processing
+  - Reads baseline counts from audit file (fast, no file scanning)
+  - New `--force` flag to regenerate audit file before restart (scans all files)
+  - Example: `--restart 5 1` uses existing audit file
+  - Example: `--restart 5 1 --force` regenerates audit file first
   - Counts existing output files to preserve accurate totals across restarts
   - Only counts files created from input batches before the restart point
 - **Modular file naming system**: Enhanced filename format for better tracking
