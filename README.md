@@ -4,11 +4,13 @@ A Rust-based exhaustive search algorithm to find all combinations of 12, 15, and
 
 ## Project Status
 
-**Current Version:** 0.4.1 (December 2025)
+**Current Version:** 0.4.2 (December 2025)
 
 **Key Features:**
 
-- Restart capability with audit file support
+- Restart capability with optimized filename-based batch discovery (Method 3)
+- Dual input/output path support for safer processing
+- Robust count mode with batched processing and idempotency
 - 5-digit batch numbering for scalability
 - Continuous batch numbering across source files
 

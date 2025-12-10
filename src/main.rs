@@ -1,13 +1,13 @@
 /// Manage the search for the grail of Set: combinations of 12 / 15 / 18 cards 
 /// with no sets
 ///
-/// Version 0.4.1 - Hybrid: Stack computation + Heap I/O + Multiple modes
+/// Version 0.4.2 - Optimized restart + dual paths + robust count mode
 /// 
 /// CLI Usage:
-///   funny.exe --size 5 -o T:\data\funny_set_exploration      # Build size 5 from size 4
-///   funny.exe --size 5-7 -o T:\data\funny_set_exploration       # Build sizes 5, 6, and 7
-///   funny.exe --restart 5 2 -o T:\data\funny_set_exploration    # Restart from size 5 batch 2
-///   funny.exe --unitary 5 2 -o T:\data\funny_set_exploration    # Process only size 5 batch 2
+///   funny.exe --size 5 -o T:\data\funny_set_exploration              # Build size 5 from size 4
+///   funny.exe --size 5-7 -o T:\data\funny_set_exploration            # Build sizes 5, 6, and 7
+///   funny.exe --restart 5 2 -i .\input -o .\output                   # Restart with separate paths
+///   funny.exe --unitary 5 2 -o T:\data\funny_set_exploration         # Process only size 5 batch 2
 ///   funny.exe --count 6 -o T:\data\funny_set_exploration        # Count size 6 files
 ///   funny.exe                                                # Default mode (sizes 4-18)
 ///

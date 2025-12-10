@@ -5,6 +5,36 @@ All notable changes to the funny_set_exploration project are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2025-12-11
+
+### Changed
+
+- **Optimized restart mode batch numbering**: Implemented Method 3 (filename-only scanning)
+  - Removed slow file deserialization methods (Method 1: count file + Method 2: deserialize all files)
+  - New approach: Scans output directory filenames to extract highest batch number
+  - Performance: Milliseconds instead of minutes/hours for large file collections
+  - Net code reduction: -166 lines (removed old methods) +62 lines (new method) = -104 lines
+  - Function: `get_next_output_batch_from_files()` - O(n) where n = number of files, not file size
+- **Enhanced dual path support**: Improved separation of input/output directories
+  - Restart mode now properly uses `-i` for input files and `-o` for output files
+  - Input files remain in source directory (read-only)
+  - Output files written to separate target directory
+  - Enables safer processing with separate source/target locations
+- **Improved count mode robustness**: Batched processing with idempotency
+  - Processes files in batches of 10 (COUNT_BATCH_SIZE)
+  - Creates intermediary tracking files: `no_set_list_intermediate_count_{size:02}_{batch:03}.txt`
+  - Timestamp-based idempotency: Skips batches if intermediary file is newer than source files
+  - Handles thousands of files efficiently without performance degradation
+  - Intermediary files kept for debugging and restart capability
+
+### Fixed
+
+- **Restart mode file generation**: Fixed critical bug where restart mode wasn't creating output files
+  - Issue: Processing completed but no output files were generated
+  - Root cause: Extensive debug output during processing loop severely impacted performance
+  - Solution: Controlled debug output with `debug_print_off()` during tight processing loops
+  - Result: Restart mode now successfully generates output files with clean user-facing messages
+
 ## [0.4.1] - 2025-12-10
 
 ### Changed

@@ -221,6 +221,8 @@ impl ListOfNSL {
         let filename = match find_input_filename(&self.input_path, self.current_size, self.current_file_batch) {
             Some(f) => f,
             None => {
+                debug_print(&format!("   ... No input file found for size {:02} batch {:05} in {}",
+                    self.current_size, self.current_file_batch, self.input_path));
                 debug_print(&format!("refill_current_from_file: No file found for size {:02} batch {:05}",
                     self.current_size, self.current_file_batch));
                 return false;
@@ -309,6 +311,8 @@ impl ListOfNSL {
     /// Process one input file using stack-optimized computation
     /// Creates output files with modular naming and closes output when input exhausted
     fn process_one_file_of_current_size_n(&mut self, max: &u64) -> u64 {
+        test_print(&format!("   ... processing batch {} of size {:02} ({} input lists)", 
+            self.current_file_batch, self.current_size, self.current.len()));
         debug_print(&format!("process_one_file_of_current_size_n: Processing batch {} \
             of no-set-{:02} ({} lists)", self.current_file_batch, self.current_size, 
             self.current.len()));
@@ -341,7 +345,10 @@ impl ListOfNSL {
             
             // Check if we need to save
             if self.new.len() as u64 >= *max {
+                test_print(&format!("   ... saving batch ({} lists), output batch {}", 
+                    self.new.len().separated_string(), self.new_output_batch));
                 if !self.save_new_to_file() {
+                    test_print("   ... ERROR: Failed to save batch");
                     debug_print("process_one_file_of_current_size_n: Error saving batch");
                 }
             }
@@ -351,9 +358,12 @@ impl ListOfNSL {
         
         // Save any remaining lists from this input file (even if < max)
         if !self.new.is_empty() {
+            test_print(&format!("   ... saving final batch ({} lists), output batch {}", 
+                self.new.len().separated_string(), self.new_output_batch));
             debug_print(&format!("process_one_file_of_current_size_n: saving final batch of {}", 
                 self.new.len()));
             if !self.save_new_to_file() {
+                test_print("   ... ERROR: Failed to save final batch");
                 debug_print("process_one_file_of_current_size_n: Error saving final batch");
             }
         }
@@ -479,9 +489,12 @@ impl ListOfNSL {
             
             let loaded = self.refill_current_from_file();
             if loaded {
+                test_print(&format!("   ... loaded {} lists from batch {}", 
+                    self.current.len(), self.current_file_batch));
                 debug_print(&format!("process_from_batch: loaded {} n-lists", 
                     self.current.len()));
                 self.process_one_file_of_current_size_n(max);
+                test_print(&format!("   ... processing complete for batch {}", self.current_file_batch));
                 self.current_file_batch += 1;
             } else {
                 debug_print(&format!("process_from_batch: no more files for size {:02}", 
@@ -499,7 +512,7 @@ impl ListOfNSL {
         
         // Report total with breakdown
         created_a_total_of(self.new_total_list_count, self.current_size + 1, elapsed_secs);
-        debug_print(&format!("   ... timing breakdown: computation {:.2}s \
+        test_print(&format!("   ... timing breakdown: computation {:.2}s \
             ({:.1}%), file I/O {:.2}s ({:.1}%), conversion {:.2}s ({:.1}%), \
             overhead {:.2}s ({:.1}%)",
             self.computation_time, (self.computation_time / elapsed_secs * 100.0),
@@ -547,7 +560,7 @@ impl ListOfNSL {
         self.new_total_list_count = 0;  // No baseline counting needed
         self.new_output_batch = next_batch;  // Start from next available batch
         
-        debug_print(&format!("   ... will create output starting from batch {:05}", next_batch));
+        test_print(&format!("   ... will create output starting from batch {:05}", next_batch));
         
         // Load the single input batch
         let loaded = self.refill_current_from_file();
@@ -1122,17 +1135,27 @@ fn find_input_filename(
     use std::fs;
     
     let pattern = format!("_to_{:02}_batch_{:05}.rkyv", target_size, target_batch);
+    test_print(&format!("   ... looking for input file matching: *{} in {}", pattern, base_path));
     
-    let entries = fs::read_dir(base_path).ok()?;
+    let entries = match fs::read_dir(base_path) {
+        Ok(e) => e,
+        Err(err) => {
+            test_print(&format!("   ... ERROR: Cannot read directory {}: {}", base_path, err));
+            return None;
+        }
+    };
     
     for entry in entries.flatten() {
         if let Some(name) = entry.file_name().to_str() {
             if name.starts_with("nsl_") && name.ends_with(&pattern) {
-                return Some(entry.path().to_string_lossy().to_string());
+                let found_path = entry.path().to_string_lossy().to_string();
+                test_print(&format!("   ... found: {}", name));
+                return Some(found_path);
             }
         }
     }
     
+    test_print("   ... no matching file found");
     None
 }
 
