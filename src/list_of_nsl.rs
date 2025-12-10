@@ -241,7 +241,7 @@ impl ListOfNSL {
                     .map(|nl| NoSetList::from_serialized(nl))
                     .collect();
                 self.conversion_time += conv_start.elapsed().as_secs_f64();
-                test_print(&format!("   ... loaded  {:>10} no-set-lists from {}", 
+                debug_print(&format!("   ... loaded  {:>10} no-set-lists from {}", 
                     vec_nsl.len().separated_string(), filename));
                 let add_len = vec_nsl.len();
                 self.current.extend(vec_nsl);
@@ -294,7 +294,7 @@ impl ListOfNSL {
                 self.new_total_list_count += additional_new;
                 self.new_output_batch += 1;
                 self.new.clear();
-                test_print(&format!("   ... saved   {:>10} no-set-lists  to  {}", 
+                debug_print(&format!("   ... saved   {:>10} no-set-lists  to  {}", 
                     additional_new.separated_string(), file));
                 true
             }
@@ -360,7 +360,7 @@ impl ListOfNSL {
         
         // Calculate and log this file's statistics
         let file_new_total = self.new_total_list_count - file_new_count_start;
-        test_print(&format!("   ... processed {} input lists, created {} new lists from batch {:05}",
+        debug_print(&format!("   ... processed {} input lists, created {} new lists from batch {:05}",
             self.current_file_list_count.separated_string(),
             file_new_total.separated_string(),
             self.current_file_batch));
@@ -424,7 +424,7 @@ impl ListOfNSL {
         
         // Report total with breakdown
         created_a_total_of(self.new_total_list_count, self.current_size + 1, elapsed_secs);
-        test_print(&format!("   ... timing breakdown: computation {:.2}s \
+        debug_print(&format!("   ... timing breakdown: computation {:.2}s \
             ({:.1}%), file I/O {:.2}s ({:.1}%), conversion {:.2}s ({:.1}%), \
             overhead {:.2}s ({:.1}%)",
             self.computation_time, (self.computation_time / elapsed_secs * 100.0),
@@ -463,14 +463,13 @@ impl ListOfNSL {
         self.new.clear();
         self.new_file_list_count = 0;
         
-        // Read baseline from count file (or scan files if count file doesn't exist)
-        // This gives us the baseline count and next available batch number
-        let (existing_count, next_batch) = read_baseline_from_count_file(
+        // Get next available batch number by scanning existing output filenames
+        let next_batch = get_next_output_batch_from_files(
             &self.output_path,
             self.current_size + 1,
             start_batch
         );
-        self.new_total_list_count = existing_count;
+        self.new_total_list_count = 0;  // No baseline counting needed
         self.new_output_batch = next_batch;  // Continue numbering from where we left off
         
         // Process files starting from start_batch
@@ -500,7 +499,7 @@ impl ListOfNSL {
         
         // Report total with breakdown
         created_a_total_of(self.new_total_list_count, self.current_size + 1, elapsed_secs);
-        test_print(&format!("   ... timing breakdown: computation {:.2}s \
+        debug_print(&format!("   ... timing breakdown: computation {:.2}s \
             ({:.1}%), file I/O {:.2}s ({:.1}%), conversion {:.2}s ({:.1}%), \
             overhead {:.2}s ({:.1}%)",
             self.computation_time, (self.computation_time / elapsed_secs * 100.0),
@@ -539,16 +538,16 @@ impl ListOfNSL {
         self.new.clear();
         self.new_file_list_count = 0;
         
-        // Read baseline from count file (files from batches < input_batch)
-        let (existing_count, next_batch) = read_baseline_from_count_file(
+        // Get next available batch number by scanning existing output filenames
+        let next_batch = get_next_output_batch_from_files(
             &self.output_path,
             self.current_size + 1,
             input_batch
         );
-        self.new_total_list_count = existing_count;
+        self.new_total_list_count = 0;  // No baseline counting needed
         self.new_output_batch = next_batch;  // Start from next available batch
         
-        test_print(&format!("   ... will create output starting from batch {:05}", next_batch));
+        debug_print(&format!("   ... will create output starting from batch {:05}", next_batch));
         
         // Load the single input batch
         let loaded = self.refill_current_from_file();
@@ -606,8 +605,8 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
     use std::fs;
     use std::path::PathBuf;
     
-    test_print(&format!("\nCounting files for size {:02}...", target_size));
-    test_print(&format!("   Input directory: {}", base_path));
+    debug_print(&format!("\nCounting files for size {:02}...", target_size));
+    debug_print(&format!("   Input directory: {}", base_path));
     
     let start_time = std::time::Instant::now();
     
@@ -626,15 +625,15 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
     }
     
     if all_files.is_empty() {
-        test_print(&format!("No files found for size {:02}", target_size));
+        debug_print(&format!("No files found for size {:02}", target_size));
         return Ok(());
     }
     
-    test_print(&format!("   Found {} files to count", all_files.len()));
+    debug_print(&format!("   Found {} files to count", all_files.len()));
     
     // Process files in batches
     let num_batches = (all_files.len() + COUNT_BATCH_SIZE - 1) / COUNT_BATCH_SIZE;
-    test_print(&format!("   Processing in {} batches of up to {} files each", num_batches, COUNT_BATCH_SIZE));
+    debug_print(&format!("   Processing in {} batches of up to {} files each", num_batches, COUNT_BATCH_SIZE));
     
     let mut intermediary_files = Vec::new();
     let mut batches_skipped = 0usize;
@@ -646,11 +645,11 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
         
         // Check if intermediary file exists and is up-to-date
         if is_intermediary_file_valid(&intermediary_filename, chunk)? {
-            test_print(&format!("\n   Batch {}/{}: Skipping (intermediary file is up-to-date)", 
+            debug_print(&format!("\n   Batch {}/{}: Skipping (intermediary file is up-to-date)", 
                 batch_idx + 1, num_batches));
             batches_skipped += 1;
         } else {
-            test_print(&format!("\n   Batch {}/{}: Processing {} files...", 
+            debug_print(&format!("\n   Batch {}/{}: Processing {} files...", 
                 batch_idx + 1, num_batches, chunk.len()));
             
             process_count_batch(chunk, &intermediary_filename, target_size)?;
@@ -661,17 +660,17 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
     }
     
     // Consolidate intermediary files into final report
-    test_print(&format!("\n   Consolidating {} intermediary files...", intermediary_files.len()));
+    debug_print(&format!("\n   Consolidating {} intermediary files...", intermediary_files.len()));
     
     consolidate_count_files(&intermediary_files, base_path, target_size)?;
     
     // Keep intermediary files for idempotency (don't delete them)
-    test_print("   Intermediary files kept for future idempotent runs");
+    debug_print("   Intermediary files kept for future idempotent runs");
     
     let elapsed = start_time.elapsed().as_secs_f64();
-    test_print(&format!("\nCount completed in {:.2} seconds", elapsed));
-    test_print(&format!("   Batches processed: {}", batches_processed));
-    test_print(&format!("   Batches skipped (up-to-date): {}", batches_skipped));
+    debug_print(&format!("\nCount completed in {:.2} seconds", elapsed));
+    debug_print(&format!("   Batches processed: {}", batches_processed));
+    debug_print(&format!("   Batches skipped (up-to-date): {}", batches_skipped));
     
     Ok(())
 }
@@ -734,7 +733,7 @@ fn process_count_batch(files: &[std::path::PathBuf], output_file: &str, _target_
                                 if let Some(vec_nlist) = read_from_file_serialized(path.to_str().unwrap()) {
                                     let count = vec_nlist.len() as u64;
                                     file_info.insert((source_batch, target_batch), (name.to_string(), count));
-                                    test_print(&format!("      ... {:>10} lists in {}",
+                                    debug_print(&format!("      ... {:>10} lists in {}",
                                         count.separated_string(), name));
                                 }
                             }
@@ -831,9 +830,9 @@ fn consolidate_count_files(intermediary_files: &[String], base_path: &str, targe
     writeln!(report_file, "# Total files: {}", all_file_info.len())?;
     writeln!(report_file, "# Total lists: {}", cumulative.separated_string())?;
     
-    test_print(&format!("\n   Summary written to: {}", report_filename));
-    test_print(&format!("   Total files: {}", all_file_info.len()));
-    test_print(&format!("   Total lists: {}", cumulative.separated_string()));
+    debug_print(&format!("\n   Summary written to: {}", report_filename));
+    debug_print(&format!("   Total files: {}", all_file_info.len()));
+    debug_print(&format!("   Total lists: {}", cumulative.separated_string()));
     
     Ok(())
 }
@@ -1028,61 +1027,48 @@ pub fn created_a_total_of(nb: u64, size: u8, elapsed_secs: f64) {
         nb.separated_string(), size, elapsed_secs, hours, minutes, seconds));
 }
 
-/// Read baseline counts from count file instead of scanning all files
-/// Returns: (total_lists_count, next_available_batch_number)
-/// 
-/// If count file doesn't exist, falls back to scanning files
-fn read_baseline_from_count_file(
+/// Get next available output batch number by scanning filenames only
+/// Does NOT read file contents - much faster than counting
+fn get_next_output_batch_from_files(
     base_path: &str,
     target_size: u8,
     restart_batch: u32
-) -> (u64, u32) {
+) -> u32 {
     use std::fs;
-    use std::io::{BufRead, BufReader};
     
-    let count_filename = format!("{}/no_set_list_count_{:02}.txt", base_path, target_size);
-    
-    // Try to open count file
-    let file = match fs::File::open(&count_filename) {
-        Ok(f) => f,
-        Err(_) => {
-            test_print(&format!("   ... no count file found ({}), scanning files...", count_filename));
-            return count_existing_output_files_before_batch(base_path, target_size, restart_batch);
-        }
+    let entries = match fs::read_dir(base_path) {
+        Ok(e) => e,
+        Err(_) => return 0,  // Directory doesn't exist, start from batch 0
     };
     
-    test_print(&format!("   ... reading baseline from {}", count_filename));
+    let pattern_prefix = format!("_to_{:02}_batch_", target_size);
+    let mut max_target_batch: Option<u32> = None;
     
-    let reader = BufReader::new(file);
-    let mut total_count = 0u64;
-    let mut max_batch: Option<u32> = None;
-    
-    for line in reader.lines().flatten() {
-        // Skip comments and empty lines
-        if line.starts_with('#') || line.trim().is_empty() {
-            continue;
-        }
-        
-        // Parse line format: "source_batch target_batch | lists_in_file | cumulative_total | filename"
-        let parts: Vec<&str> = line.split('|').collect();
-        if parts.len() >= 3 {
-            // Extract source_batch and target_batch from first part
-            let batch_parts: Vec<&str> = parts[0].trim().split_whitespace().collect();
-            if batch_parts.len() >= 2 {
-                if let (Ok(source_batch), Ok(target_batch)) = (
-                    batch_parts[0].parse::<u32>(),
-                    batch_parts[1].parse::<u32>()
-                ) {
-                    // Only count entries where source_batch < restart_batch
-                    if source_batch < restart_batch {
-                        // Extract count from second part (remove commas)
-                        let count_str = parts[1].trim().replace(',', "");
-                        if let Ok(count) = count_str.parse::<u64>() {
-                            total_count += count;
-                            // Track max target batch
-                            max_batch = Some(
-                                max_batch.map_or(target_batch, |current_max| current_max.max(target_batch))
-                            );
+    for entry in entries.flatten() {
+        if let Some(name) = entry.file_name().to_str() {
+            // Check if this is an output file for our target size
+            if name.starts_with("nsl_") && name.contains(&pattern_prefix) && name.ends_with(".rkyv") {
+                // Extract the SOURCE batch number from filename
+                // Format: nsl_XX_batch_YYYYY_to_ZZ_batch_BBBBB.rkyv
+                if let Some(to_pos) = name.find("_to_") {
+                    let before_to = &name[..to_pos];
+                    if let Some(batch_pos) = before_to.rfind("_batch_") {
+                        let batch_str = &before_to[batch_pos + 7..];
+                        if let Ok(source_batch_num) = batch_str.parse::<u32>() {
+                            // Only consider files created from source batches < restart_batch
+                            if source_batch_num < restart_batch {
+                                // Extract target batch number
+                                let after_to = &name[to_pos + 4..];
+                                if let Some(target_batch_pos) = after_to.rfind("_batch_") {
+                                    let target_batch_str = &after_to[target_batch_pos + 7..after_to.len() - 5]; // -5 for ".rkyv"
+                                    if let Ok(target_batch_num) = target_batch_str.parse::<u32>() {
+                                        // Track maximum target batch number
+                                        max_target_batch = Some(
+                                            max_target_batch.map_or(target_batch_num, |current_max| current_max.max(target_batch_num))
+                                        );
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -1090,18 +1076,12 @@ fn read_baseline_from_count_file(
         }
     }
     
-    let next_batch = max_batch.map_or(0, |max| max + 1);
+    let next_batch = max_target_batch.map_or(0, |max| max + 1);
     
-    if total_count > 0 {
-        test_print(&format!("   ... found {:>17} existing lists from count file",
-            total_count.separated_string()));
-        test_print(&format!("   ... next batch will be {:05}", next_batch));
-    }
+    debug_print(&format!("get_next_output_batch_from_files: next batch for size {:02} = {:05} (scanned filenames only)",
+        target_size, next_batch));
     
-    debug_print(&format!("read_baseline_from_count_file: total {} entries for size {:02} before batch {:05}, next batch = {:05}",
-        total_count, target_size, restart_batch, next_batch));
-    
-    (total_count, next_batch)
+    next_batch
 }
 
 /// Filename helper - single source of truth for all file naming
@@ -1154,73 +1134,6 @@ fn find_input_filename(
     }
     
     None
-}
-
-/// Count existing output files before a specific batch (for restart mode)
-/// Counts files matching: nsl_*_to_{target_size}_batch_{batch}.rkyv where source batch < restart_batch
-/// Returns: (total_lists_count, next_available_batch_number)
-fn count_existing_output_files_before_batch(
-    base_path: &str,
-    target_size: u8,
-    restart_batch: u32
-) -> (u64, u32) {
-    use std::fs;
-    let mut total = 0u64;
-    let mut max_target_batch: Option<u32> = None;
-    
-    let entries = match fs::read_dir(base_path) {
-        Ok(e) => e,
-        Err(_) => return (0, 0),
-    };
-    
-    let pattern_prefix = format!("_to_{:02}_batch_", target_size);
-    
-    for entry in entries.flatten() {
-        if let Some(name) = entry.file_name().to_str() {
-            // Check if this is an output file for our target size
-            if name.starts_with("nsl_") && name.contains(&pattern_prefix) && name.ends_with(".rkyv") {
-                // Extract the SOURCE batch number from filename
-                // Format: nsl_XX_batch_YYYYY_to_ZZ_batch_BBBBB.rkyv
-                if let Some(to_pos) = name.find("_to_") {
-                    let before_to = &name[..to_pos];
-                    if let Some(batch_pos) = before_to.rfind("_batch_") {
-                        let batch_str = &before_to[batch_pos + 7..];
-                        if let Ok(source_batch_num) = batch_str.parse::<u32>() {
-                            // Only count files created from source batches < restart_batch
-                            if source_batch_num < restart_batch {
-                                // Also extract target batch number
-                                let after_to = &name[to_pos + 4..];
-                                if let Some(target_batch_pos) = after_to.rfind("_batch_") {
-                                    let target_batch_str = &after_to[target_batch_pos + 7..after_to.len() - 5]; // -5 for ".rkyv"
-                                    if let Ok(target_batch_num) = target_batch_str.parse::<u32>() {
-                                        // Track maximum target batch number
-                                        max_target_batch = Some(
-                                            max_target_batch.map_or(target_batch_num, |current_max| current_max.max(target_batch_num))
-                                        );
-                                    }
-                                }
-                                
-                                let path = entry.path();
-                                if let Some(vec_nlist) = read_from_file_serialized(path.to_str().unwrap()) {
-                                    let count = vec_nlist.len() as u64;
-                                    total += count;
-                                    test_print(&format!("   ... counted {:>10} no-set-lists from {}",
-                                        count.separated_string(), name));
-                                    debug_print(&format!("count_existing: {} entries in {} (source batch {})",
-                                        count, name, source_batch_num));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    let next_batch = max_target_batch.map_or(0, |max| max + 1);
-    debug_print(&format!("count_existing_output_files_before_batch: total {} entries for size {:02} before batch {:05}, next batch = {:05}",
-        total, target_size, restart_batch, next_batch));
-    (total, next_batch)
 }
 
 /// Save NoSetListSerialized vector to file using rkyv
