@@ -147,9 +147,6 @@ fn main() {
     /// - Peak RAM during save: ~10.5GB (vec + archive + overhead)
     const MAX_NLISTS_PER_FILE: u64 = 10_000_000;
 
-    // Initialize log file for test_print output
-    init_log_file();
-
     debug_print_on();
     debug_print_off();
     test_print_off();
@@ -210,6 +207,9 @@ fn main() {
     // COUNT MODE: Count existing files for a specific size
     // =====================================================================
     if let Some(count_size) = args.count {
+        // Initialize log file for count mode only
+        init_log_file();
+        
         if count_size < 3 || count_size > 18 {
             eprintln!("Error: Count size {} out of range (3-18)", count_size);
             std::process::exit(1);
