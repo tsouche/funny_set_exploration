@@ -440,9 +440,9 @@ impl ListOfNSL {
         self.new.clear();
         self.new_file_list_count = 0;
         
-        // Read baseline from audit file (or scan files if audit doesn't exist)
+        // Read baseline from count file (or scan files if count file doesn't exist)
         // This gives us the baseline count and next available batch number
-        let (existing_count, next_batch) = read_baseline_from_audit_file(
+        let (existing_count, next_batch) = read_baseline_from_count_file(
             &self.base_path,
             self.current_size + 1,
             start_batch
@@ -488,15 +488,15 @@ impl ListOfNSL {
         self.new_total_list_count
     }
     
-    /// Replay processing for a single input batch
-    /// Reprocesses one specific input file and regenerates its output files
-    pub fn replay_single_batch(&mut self, input_size: u8, input_batch: u32, max: &u64) -> u64 {
+    /// Process a single input batch (unit processing)
+    /// Processes one specific input file and generates its output files
+    pub fn process_single_batch(&mut self, input_size: u8, input_batch: u32, max: &u64) -> u64 {
         if input_size < 3 {
-            debug_print("replay_single_batch: input size must be >= 3");
+            debug_print("process_single_batch: input size must be >= 3");
             return 0;
         }
         
-        debug_print(&format!("replay_single_batch: reprocessing input size {:02} batch {:05}", 
+        debug_print(&format!("process_single_batch: processing input size {:02} batch {:05}", 
             input_size, input_batch));
         
         // Start timing
@@ -516,8 +516,8 @@ impl ListOfNSL {
         self.new.clear();
         self.new_file_list_count = 0;
         
-        // Read baseline from audit file (files from batches < input_batch)
-        let (existing_count, next_batch) = read_baseline_from_audit_file(
+        // Read baseline from count file (files from batches < input_batch)
+        let (existing_count, next_batch) = read_baseline_from_count_file(
             &self.base_path,
             self.current_size + 1,
             input_batch
@@ -535,7 +535,7 @@ impl ListOfNSL {
             return 0;
         }
         
-        debug_print(&format!("replay_single_batch: loaded {} n-lists", self.current.len()));
+        debug_print(&format!("process_single_batch: loaded {} n-lists", self.current.len()));
         
         // Process this single batch
         let created_count = self.process_one_file_of_current_size_n(max);
@@ -544,7 +544,7 @@ impl ListOfNSL {
         let elapsed_secs = elapsed.as_secs_f64();
         let overhead = elapsed_secs - self.computation_time - self.file_io_time - self.conversion_time;
         
-        debug_print(&format!("replay_single_batch: Finished reprocessing size {:02} batch {:05}", 
+        debug_print(&format!("process_single_batch: Finished processing size {:02} batch {:05}", 
             input_size, input_batch));
         
         // Report total with breakdown
@@ -567,14 +567,14 @@ impl Default for ListOfNSL {
     }
 }
 
-/// Audit and count all existing output files for a given target size
+/// Count all existing output files for a given target size
 /// Creates a summary report file with counts per batch
-pub fn audit_size_files(base_path: &str, target_size: u8) -> std::io::Result<()> {
+pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()> {
     use std::fs;
     use std::io::Write;
     use std::collections::BTreeMap;
     
-    test_print(&format!("\nAuditing files for size {:02}...", target_size));
+    test_print(&format!("\nCounting files for size {:02}...", target_size));
     
     // Collect all files for this target size
     // Key: (source_batch, target_batch), Value: (filename, count)
@@ -629,7 +629,7 @@ pub fn audit_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
     // Write header
     writeln!(report_file, "# File Count Summary for no-set-{:02} lists", target_size)?;
     writeln!(report_file, "# Generated: {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"))?;
-    writeln!(report_file, "# Format: source_batch target_batch | lists_in_file | cumulative_total | filename")?;
+    writeln!(report_file, "# Format: source_batch target_batch | cumulative_nb_lists | nb_lists_in_file | filename")?;
     writeln!(report_file, "#")?;
     
     // Sort by target_batch (descending), then source_batch (descending)
@@ -651,8 +651,8 @@ pub fn audit_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
             "{:05} {:05} | {:>15} | {:>15} | {}",
             source_batch,
             target_batch,
-            count.separated_string(),
             cumulative.separated_string(),
+            count.separated_string(),
             filename
         ));
     }
@@ -685,11 +685,11 @@ pub fn created_a_total_of(nb: u64, size: u8, elapsed_secs: f64) {
         nb.separated_string(), size, elapsed_secs, hours, minutes, seconds));
 }
 
-/// Read baseline counts from audit file instead of scanning all files
+/// Read baseline counts from count file instead of scanning all files
 /// Returns: (total_lists_count, next_available_batch_number)
 /// 
-/// If audit file doesn't exist, falls back to scanning files
-fn read_baseline_from_audit_file(
+/// If count file doesn't exist, falls back to scanning files
+fn read_baseline_from_count_file(
     base_path: &str,
     target_size: u8,
     restart_batch: u32
@@ -697,18 +697,18 @@ fn read_baseline_from_audit_file(
     use std::fs;
     use std::io::{BufRead, BufReader};
     
-    let audit_filename = format!("{}/size_{:02}_count.txt", base_path, target_size);
+    let count_filename = format!("{}/size_{:02}_count.txt", base_path, target_size);
     
-    // Try to open audit file
-    let file = match fs::File::open(&audit_filename) {
+    // Try to open count file
+    let file = match fs::File::open(&count_filename) {
         Ok(f) => f,
         Err(_) => {
-            test_print(&format!("   ... no audit file found ({}), scanning files...", audit_filename));
+            test_print(&format!("   ... no count file found ({}), scanning files...", count_filename));
             return count_existing_output_files_before_batch(base_path, target_size, restart_batch);
         }
     };
     
-    test_print(&format!("   ... reading baseline from {}", audit_filename));
+    test_print(&format!("   ... reading baseline from {}", count_filename));
     
     let reader = BufReader::new(file);
     let mut total_count = 0u64;
@@ -750,12 +750,12 @@ fn read_baseline_from_audit_file(
     let next_batch = max_batch.map_or(0, |max| max + 1);
     
     if total_count > 0 {
-        test_print(&format!("   ... found {:>17} existing lists from audit file",
+        test_print(&format!("   ... found {:>17} existing lists from count file",
             total_count.separated_string()));
         test_print(&format!("   ... next batch will be {:05}", next_batch));
     }
     
-    debug_print(&format!("read_baseline_from_audit_file: total {} entries for size {:02} before batch {:05}, next batch = {:05}",
+    debug_print(&format!("read_baseline_from_count_file: total {} entries for size {:02} before batch {:05}, next batch = {:05}",
         total_count, target_size, restart_batch, next_batch));
     
     (total_count, next_batch)

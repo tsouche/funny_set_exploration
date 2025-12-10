@@ -2,7 +2,7 @@
 
 ## Overview
 
-Version 0.4.0 uses a simplified CLI with optional size, restart, and output-path arguments. The program uses a hybrid stack/heap implementation for optimal performance with restart capability.
+Version 0.4.1 provides four operational modes: normal size processing, restart from specific batch, unitary processing (single batch - the only canonical way to fix defective files), and count mode. The program uses a hybrid stack/heap implementation for optimal performance.
 
 ## Running the Program
 
@@ -36,7 +36,7 @@ cargo run --release -- --size 4
 cargo run --release -- --size 7
 ```
 
-### CLI Mode: Size Range (v0.4.0+)
+### CLI Mode: Size Range (v0.4.1+)
 
 Process multiple sizes in a single run:
 
@@ -68,18 +68,36 @@ cargo run --release -- --size 5-7 -o "./output"
 
 ## Command-Line Options
 
-```
+```text
 funny_set_exploration [OPTIONS]
 
 Options:
   -s, --size <SIZE>
           Target size to build (4-18 or range like 5-7)
           
-          If not provided, runs the default behavior (creates seeds + sizes 4-6)
+          If not provided, runs the default behavior (creates seeds + sizes 4-18)
           - Single size: "5" builds size 5 from size 4 files
           - Range: "5-7" builds sizes 5, 6, and 7 sequentially
           - Size 4: Builds from seed lists (size 3)
           - Size 5+: Requires files from previous size
+
+      --restart <SIZE> <BATCH>
+          Restart from specific input batch, continue through size 18
+          SIZE refers to INPUT size
+          Reads baseline from count file (use --force to regenerate)
+
+      --unitary <SIZE> <BATCH>
+          Process only one specific input batch (unitary processing)
+          This is the ONLY canonical way to overwrite/fix defective files
+          SIZE refers to INPUT size
+          Use --force to regenerate count file first
+
+      --count <SIZE>
+          Count existing files for target size
+          Creates size_XX_count.txt summary report
+
+      --force
+          Force regeneration of count file (use with --restart or --unitary)
 
   -o, --output-path <OUTPUT_PATH>
           Output directory path (optional)
@@ -91,6 +109,39 @@ Options:
 
   -h, --help
           Print help
+```
+
+### Restart Mode
+
+Resume processing from a specific batch:
+
+```powershell
+# Restart from input size 5 batch 2, continue through size 18
+cargo run --release -- --restart 5 2 -o "T:\data\funny_set_exploration"
+
+# Force regenerate count file before restart
+cargo run --release -- --restart 5 2 --force -o "T:\data\funny_set_exploration"
+```
+
+### Unitary Mode
+
+Process only one specific batch (canonical way to fix defective files):
+
+```powershell
+# Reprocess input size 5 batch 2 only
+cargo run --release -- --unitary 5 2 -o "T:\data\funny_set_exploration"
+
+# Force regenerate count file first
+cargo run --release -- --unitary 5 2 --force -o "T:\data\funny_set_exploration"
+```
+
+### Count Mode
+
+Count existing files without processing:
+
+```powershell
+# Count all size 6 files, create size_06_count.txt
+cargo run --release -- --count 6 -o "T:\data\funny_set_exploration"
 ```
 
 ## Prerequisites

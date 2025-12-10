@@ -5,18 +5,40 @@ All notable changes to the funny_set_exploration project are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2025-12-10
+
+### Changed
+
+- **Renamed `--unit` to `--unitary`**: More descriptive mode name
+  - Updated all documentation to reflect new terminology
+  - Emphasized that unitary mode is the ONLY canonical way to overwrite/fix defective files
+  - Updated CLI arguments, function names, and mode descriptions
+- **Improved count file format**: Better column organization
+  - Swapped column order: `cumulative_nb_lists` now comes before `nb_lists_in_file`
+  - Renamed columns for clarity:
+    - `lists_in_file` → `nb_lists_in_file`
+    - `cumulative_total` → `cumulative_nb_lists`
+  - New format: `source_batch target_batch | cumulative_nb_lists | nb_lists_in_file | filename`
+- **Renamed `--audit` to `--count`**: More intuitive terminology throughout
+  - Renamed `audit_size_files()` → `count_size_files()`
+  - Updated all documentation and help text
+- **Renamed `--replay` to `--unit` then to `--unitary`**: Progressive refinement of terminology
+  - Clarified the single-batch processing concept
+  - Better distinguishes from restart mode (continues onwards) vs unitary (single batch only)
+
 ## [0.4.0] - 2025-12-07
 
 ### Added
 
-- **Replay mode**: New `--replay <SIZE> <BATCH>` command to reprocess a single input batch
+- **Unitary mode**: New `--unitary <SIZE> <BATCH>` command to reprocess a single input batch
   - SIZE refers to INPUT size (same as restart semantics)
   - Reprocesses only the specified batch, regenerating its output files
-  - Example: `--replay 5 2` reprocesses input size 5 batch 2 (creates size 6 outputs)
-  - Uses audit file for baseline (like restart mode)
-  - Supports `--force` flag to regenerate audit file first
+  - This is the ONLY canonical way to overwrite/fix defective output files
+  - Example: `--unitary 5 2` reprocesses input size 5 batch 2 (creates size 6 outputs)
+  - Uses count file for baseline (like restart mode)
+  - Supports `--force` flag to regenerate count file first
   - Useful for fixing corrupted output files or after algorithm changes
-- **Audit mode**: New `--audit <SIZE>` command to count existing files without processing
+- **Count mode**: New `--count <SIZE>` command to count existing files without processing
   - Scans all output files for a given target size
   - Counts lists in each file
   - Creates summary report: `size_XX_count.txt`
@@ -25,10 +47,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Useful for verifying counts and tracking progress
 - **Restart capability**: Resume processing from a specific input size and batch
   - New `--restart <SIZE> <BATCH>` CLI argument to resume interrupted processing
-  - Reads baseline counts from audit file (fast, no file scanning)
-  - New `--force` flag to regenerate audit file before restart (scans all files)
-  - Example: `--restart 5 1` uses existing audit file
-  - Example: `--restart 5 1 --force` regenerates audit file first
+  - Reads baseline counts from count file (fast, no file scanning)
+  - New `--force` flag to regenerate count file before restart (scans all files)
+  - Example: `--restart 5 1` uses existing count file
+  - Example: `--restart 5 1 --force` regenerates count file first
   - Counts existing output files to preserve accurate totals across restarts
   - Only counts files created from input batches before the restart point
 - **Modular file naming system**: Enhanced filename format for better tracking

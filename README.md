@@ -4,14 +4,16 @@ A Rust-based exhaustive search algorithm to find all combinations of 12, 15, and
 
 ## Project Status
 
-**Current Version:** 0.4.0 (December 2025)
+**Current Version:** 0.4.1 (December 2025)
 
 **Key Features:**
+
 - Restart capability with audit file support
 - 5-digit batch numbering for scalability
 - Continuous batch numbering across source files
 
 **Architecture:** Hybrid stack/heap implementation
+
 - **NoSetList** (stack arrays): Zero-allocation computation, 4-5× faster
 - **NoSetListSerialized** (heap Vec): Compact 2GB files with rkyv size_32
 - **Best of both worlds**: Fast computation + compact storage
@@ -65,6 +67,15 @@ cargo build --release
 
 # Run with custom output directory
 ./target/release/funny_set_exploration --size 7 --output-path T:\data\funny_set_exploration
+
+# Restart from specific batch
+./target/release/funny_set_exploration --restart 5 2 -o T:\data\funny_set_exploration
+
+# Process single batch only (unitary mode - canonical way to fix defective files)
+./target/release/funny_set_exploration --unitary 5 2 -o T:\data\funny_set_exploration
+
+# Count existing files
+./target/release/funny_set_exploration --count 6 -o T:\data\funny_set_exploration
 ```
 
 ### CLI Options
@@ -75,7 +86,25 @@ funny_set_exploration [OPTIONS]
 Options:
   -s, --size <SIZE>
           Target size to build (4-18 or range like 5-7)
-          If omitted, runs default behavior (creates seeds + sizes 4-6)
+          If omitted, runs default behavior (creates seeds + sizes 4-18)
+
+      --restart <SIZE> <BATCH>
+          Restart from specific input batch, continue through size 18
+          SIZE refers to INPUT size. Reads baseline from count file.
+          Use --force to regenerate count file first.
+
+      --unitary <SIZE> <BATCH>
+          Process only one specific input batch (unitary processing)
+          This is the ONLY canonical way to overwrite/fix defective files.
+          SIZE refers to INPUT size. Reprocesses only this batch.
+          Use --force to regenerate count file first.
+
+      --count <SIZE>
+          Count existing files for target size, create summary report
+          Creates size_XX_count.txt without processing new lists
+
+      --force
+          Force regeneration of count file (use with --restart or --unitary)
 
   -o, --output-path <OUTPUT_PATH>
           Output directory path (optional)
@@ -93,6 +122,7 @@ Options:
 Files are named: `nlist_{size:02}_batch_{batch:03}.rkyv`
 
 Examples:
+
 - `nlist_05_batch_000.rkyv` - First batch of 5-card lists (~2GB)
 - `nlist_06_batch_000.rkyv` - First batch of 6-card lists (~2GB)
 - `nlist_07_batch_059.rkyv` - 60th batch of 7-card lists
@@ -101,7 +131,8 @@ Examples:
 
 ### Version History
 
-- **v0.4.0** (Current): Added restart capability with modular file naming
+- **v0.4.1** (Current): Renamed modes for clarity, improved count file format
+- **v0.4.0**: Added restart capability with modular file naming
 - **v0.3.2**: Simplified to hybrid-only implementation
   - Removed v0.2.2 (heap-based) and v0.3.0 (stack-only)
   - Cleaner codebase with single optimized approach
@@ -125,7 +156,7 @@ Examples:
 
 **Size 6 processing (155M lists):**
 
-| Metric | v0.4.0 (Current) | v0.2.2 (Heap) |
+| Metric | v0.4.1 (Current) | v0.2.2 (Heap) |
 |--------|------------------|---------------|
 | Total time | ~308s | ~398s |
 | Computation | ~19s (6%) | ~225s (56%) |
@@ -133,6 +164,7 @@ Examples:
 | File size | ~2GB | ~2GB |
 
 **Key improvements:**
+
 - 10× faster core algorithm (stack operations)
 - Same compact file format (rkyv with Vec)
 - 23% faster overall despite conversion overhead
@@ -244,16 +276,16 @@ pub struct ListOfNlist {
 
 ### File Format
 
-Output files use binary serialization (bincode) with the naming pattern:
+Output files use rkyv zero-copy serialization with modular naming:
 
 ```bash
-nlist_{size:02}_batch_{number:03}.bin
+nsl_{source_size:02}_batch_{source_batch:05}_to_{target_size:02}_batch_{target_batch:05}.rkyv
 ```
 
 Examples:
 
-- `nlist_03_batch_000.bin` - First batch of 3-card lists
-- `nlist_06_batch_007.bin` - 8th batch of 6-card lists
+- `nsl_03_batch_00000_to_04_batch_00000.rkyv` - From size 3 batch 0 to size 4 batch 0
+- `nsl_05_batch_00001_to_06_batch_00012.rkyv` - From size 5 batch 1 to size 6 batch 12
 
 ### Performance Characteristics
 
@@ -309,9 +341,11 @@ let mut no_set_lists = ListOfNlist::with_path("/mnt/nas/data/funny_set_explorati
 
 ## Dependencies
 
-- **serde** (1.0): Serialization framework
-- **bincode** (1.3): Binary encoding/decoding
+- **rkyv** (0.7): Zero-copy serialization framework
+- **memmap2**: Memory-mapped file I/O
 - **separator** (0.4): Number formatting with thousands separators
+- **clap** (4.5): CLI argument parsing
+- **chrono**: Timestamp generation for count files
 
 ## Future Optimizations
 

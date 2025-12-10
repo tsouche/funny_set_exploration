@@ -1,21 +1,25 @@
 /// Manage the search for the grail of Set: combinations of 12 / 15 / 18 cards 
 /// with no sets
 ///
-/// Version 0.4.0 - Hybrid: Stack computation + Heap I/O + Restart capability
+/// Version 0.4.1 - Hybrid: Stack computation + Heap I/O + Multiple modes
 /// 
 /// CLI Usage:
 ///   funny.exe --size 5 -o T:\data\funny_set_exploration      # Build size 5 from size 4
-///   funny.exe --size 5-7 -o T:\data\funny_set_exploration    # Build sizes 5, 6, and 7
-///   funny.exe --restart 5 2 -o T:\data\funny_set_exploration # Restart from size 5 batch 2
+///   funny.exe --size 5-7 -o T:\data\funny_set_exploration       # Build sizes 5, 6, and 7
+///   funny.exe --restart 5 2 -o T:\data\funny_set_exploration    # Restart from size 5 batch 2
+///   funny.exe --unitary 5 2 -o T:\data\funny_set_exploration    # Process only size 5 batch 2
+///   funny.exe --count 6 -o T:\data\funny_set_exploration        # Count size 6 files
 ///   funny.exe                                                # Default mode (sizes 4-18)
 ///
 /// Arguments:
-///   --size, -s <SIZE>       Target size to build (4-18, or range like 5-7)
-///                           If omitted, runs default behavior (creates seeds + sizes 4-18)
-///   --restart <SIZE> <BATCH> Restart from specific input file (size and batch number)
-///                           Processes from that batch through size 18
-///   --output-path, -o       Optional: Directory for output files
-///                           Defaults to current directory
+///   --size, -s <SIZE>        Target size to build (4-18, or range like 5-7)
+///                            If omitted, runs default behavior (creates seeds + sizes 4-18)
+///   --restart <SIZE> <BATCH>   Restart from specific input batch through size 18
+///   --unitary <SIZE> <BATCH>   Process only one specific input batch (unitary processing)
+///   --count <SIZE>             Count existing files and create summary report
+///   --force                    Force regeneration of count file (with restart/unitary)
+///   --output-path, -o        Optional: Directory for output files
+///                            Defaults to current directory
 ///
 /// Implementation:
 ///   - Hybrid approach: NoSetList (stack) for fast computation, NoSetListSerialized (heap) for compact I/O
@@ -43,7 +47,7 @@ struct Args {
     /// - Range: "5-7" builds sizes 5, 6, and 7 sequentially
     /// - Size 4: Builds from seed lists (size 3)
     /// - Size 5+: Requires files from previous size
-    #[arg(short, long, conflicts_with_all = ["restart", "replay"])]
+    #[arg(short, long, conflicts_with_all = ["restart", "unitary"])]
     size: Option<String>,
 
     /// Restart from specific input file: <SIZE> <BATCH>
@@ -54,40 +58,41 @@ struct Args {
     ///   --restart 5 2   Load input size 5 batch 2, continue through size 18
     ///   --restart 7 0   Load input size 7 batch 0, continue through size 18
     /// 
-    /// By default, reads baseline counts from audit file (size_XX_count.txt).
-    /// Use --force to regenerate audit file by scanning all files.
-    #[arg(long, num_args = 2, value_names = ["SIZE", "BATCH"], conflicts_with_all = ["size", "audit", "replay"])]
+    /// By default, reads baseline counts from count file (size_XX_count.txt).
+    /// Use --force to regenerate count file by scanning all files.
+    #[arg(long, num_args = 2, value_names = ["SIZE", "BATCH"], conflicts_with_all = ["size", "count", "unitary"])]
     restart: Option<Vec<u32>>,
 
-    /// Replay processing for a single input batch: <SIZE> <BATCH>
+    /// Process a single input batch (unitary processing): <SIZE> <BATCH>
     /// 
     /// SIZE refers to the INPUT size. Processes ONLY this specific batch.
+    /// This is the ONLY canonical way to overwrite/fix a defective output file.
     /// Output files from this batch will be regenerated.
     /// 
     /// Examples:
-    ///   --replay 5 2    Reprocess input size 5 batch 2 only (creates size 6 outputs)
-    ///   --replay 7 0    Reprocess input size 7 batch 0 only (creates size 8 outputs)
+    ///   --unitary 5 2    Reprocess input size 5 batch 2 only (creates size 6 outputs)
+    ///   --unitary 7 0    Reprocess input size 7 batch 0 only (creates size 8 outputs)
     /// 
-    /// Use --force to regenerate audit file first (recalculates baseline).
-    #[arg(long, num_args = 2, value_names = ["SIZE", "BATCH"], conflicts_with_all = ["size", "audit", "restart"])]
-    replay: Option<Vec<u32>>,
+    /// Use --force to regenerate count file first (recalculates baseline).
+    #[arg(long, num_args = 2, value_names = ["SIZE", "BATCH"], conflicts_with_all = ["size", "count", "restart"])]
+    unitary: Option<Vec<u32>>,
 
-    /// Force regeneration of audit file when using --restart or --replay
+    /// Force regeneration of count file when using --restart or --unitary
     /// 
-    /// By default, restart/replay modes read the existing audit file for baseline counts.
-    /// This flag forces a full file scan to regenerate the audit file first.
+    /// By default, restart/unitary modes read the existing count file for baseline counts.
+    /// This flag forces a full file scan to regenerate the count file first.
     #[arg(long)]
     force: bool,
 
-    /// Audit existing files for a specific size and create count summary
+    /// Count existing files for a specific size and create summary report
     /// 
     /// Examples:
-    ///   --audit 6   Count all size 6 files and create size_06_count.txt
+    ///   --count 6   Count all size 6 files and create size_06_count.txt
     /// 
     /// This scans all files, counts lists, and creates a summary report
     /// without processing any new lists
-    #[arg(long, conflicts_with_all = ["size", "restart", "replay"])]
-    audit: Option<u8>,
+    #[arg(long, conflicts_with_all = ["size", "restart", "unitary"])]
+    count: Option<u8>,
 
     /// Output directory path (optional)
     /// 
@@ -180,16 +185,16 @@ fn main() {
         None
     };
 
-    // Parse replay parameters if provided
-    let replay_params = if let Some(ref replay_vec) = args.replay {
-        if replay_vec.len() != 2 {
-            eprintln!("Error: --replay requires exactly 2 arguments: SIZE BATCH");
+    // Parse unitary parameters if provided
+    let unitary_params = if let Some(ref unitary_vec) = args.unitary {
+        if unitary_vec.len() != 2 {
+            eprintln!("Error: --unitary requires exactly 2 arguments: SIZE BATCH");
             std::process::exit(1);
         }
-        let size = replay_vec[0] as u8;
-        let batch = replay_vec[1];  // u32 for 5-digit batch numbers
+        let size = unitary_vec[0] as u8;
+        let batch = unitary_vec[1];  // u32 for 5-digit batch numbers
         if size < 3 || size > 17 {
-            eprintln!("Error: Replay size {} out of range (3-17)", size);
+            eprintln!("Error: Unitary size {} out of range (3-17)", size);
             std::process::exit(1);
         }
         Some((size, batch))
@@ -197,31 +202,31 @@ fn main() {
         None
     };
 
-    use crate::list_of_nsl::{ListOfNSL, audit_size_files};
+    use crate::list_of_nsl::{ListOfNSL, count_size_files};
 
     banner("Funny Set Exploration)");
     
     // =====================================================================
-    // AUDIT MODE: Count existing files for a specific size
+    // COUNT MODE: Count existing files for a specific size
     // =====================================================================
-    if let Some(audit_size) = args.audit {
-        if audit_size < 3 || audit_size > 18 {
-            eprintln!("Error: Audit size {} out of range (3-18)", audit_size);
+    if let Some(count_size) = args.count {
+        if count_size < 3 || count_size > 18 {
+            eprintln!("Error: Count size {} out of range (3-18)", count_size);
             std::process::exit(1);
         }
         
-        test_print(&format!("AUDIT MODE: Counting files for size {}", audit_size));
+        test_print(&format!("COUNT MODE: Counting files for size {}", count_size));
         
         let base_path = args.output_path.as_deref().unwrap_or(".");
         test_print(&format!("Directory: {}\n", base_path));
         
-        match audit_size_files(base_path, audit_size) {
+        match count_size_files(base_path, count_size) {
             Ok(()) => {
-                test_print("\nAudit completed successfully!");
+                test_print("\nCount completed successfully!");
                 std::process::exit(0);
             }
             Err(e) => {
-                eprintln!("Error during audit: {}", e);
+                eprintln!("Error during count: {}", e);
                 std::process::exit(1);
             }
         }
@@ -244,13 +249,13 @@ fn main() {
             "."
         };
         
-        // If force flag is set, regenerate audit file for target size
+        // If force flag is set, regenerate count file for target size
         if args.force {
-            test_print(&format!("\nFORCE MODE: Regenerating audit file for size {}...", restart_size + 1));
-            match audit_size_files(base_path, restart_size + 1) {
-                Ok(()) => test_print("Audit file regenerated successfully\n"),
+            test_print(&format!("\nFORCE MODE: Regenerating count file for size {}...", restart_size + 1));
+            match count_size_files(base_path, restart_size + 1) {
+                Ok(()) => test_print("Count file regenerated successfully\n"),
                 Err(e) => {
-                    eprintln!("Error regenerating audit file: {}", e);
+                    eprintln!("Error regenerating count file: {}", e);
                     std::process::exit(1);
                 }
             }
@@ -289,12 +294,12 @@ fn main() {
             
             test_print(&format!("\nCompleted size {}!\n", target_size));
         }
-    } else if let Some((replay_size, replay_batch)) = replay_params {
+    } else if let Some((unitary_size, unitary_batch)) = unitary_params {
         // =====================================================================
-        // REPLAY MODE: Reprocess a single input batch
+        // UNITARY MODE: Process a single input batch
         // =====================================================================
-        test_print(&format!("REPLAY MODE: Reprocessing input size {} batch {}", replay_size, replay_batch));
-        test_print(&format!("Output: size {} files", replay_size + 1));
+        test_print(&format!("UNITARY MODE: Processing input size {} batch {}", unitary_size, unitary_batch));
+        test_print(&format!("Output: size {} files", unitary_size + 1));
         test_print("Strategy: Stack computation + Heap I/O");
         test_print(&format!("Batch size: {} entries/file (~2GB, compact)", MAX_NLISTS_PER_FILE.separated_string()));
         
@@ -306,13 +311,13 @@ fn main() {
             "."
         };
         
-        // If force flag is set, regenerate audit file for target size
+        // If force flag is set, regenerate count file for target size
         if args.force {
-            test_print(&format!("\nFORCE MODE: Regenerating audit file for size {}...", replay_size + 1));
-            match audit_size_files(base_path, replay_size + 1) {
-                Ok(()) => test_print("Audit file regenerated successfully\n"),
+            test_print(&format!("\nFORCE MODE: Regenerating count file for size {}...", unitary_size + 1));
+            match count_size_files(base_path, unitary_size + 1) {
+                Ok(()) => test_print("Count file regenerated successfully\n"),
                 Err(e) => {
-                    eprintln!("Error regenerating audit file: {}", e);
+                    eprintln!("Error regenerating count file: {}", e);
                     std::process::exit(1);
                 }
             }
@@ -327,14 +332,14 @@ fn main() {
         };
 
         // Process only the specified batch
-        test_print(&format!("Reprocessing input size {} batch {}:", replay_size, replay_batch));
-        let _nb_new = no_set_lists.replay_single_batch(
-            replay_size,
-            replay_batch,
+        test_print(&format!("Processing input size {} batch {}:", unitary_size, unitary_batch));
+        let _nb_new = no_set_lists.process_single_batch(
+            unitary_size,
+            unitary_batch,
             &MAX_NLISTS_PER_FILE
         );
         
-        test_print(&format!("\nReplay completed for size {} batch {}!\n", replay_size, replay_batch));
+        test_print(&format!("\nUnitary processing completed for size {} batch {}!\n", unitary_size, unitary_batch));
     } else if let Some((start_size, end_size)) = size_range {
         // =====================================================================
         // CLI MODE: Process size range
