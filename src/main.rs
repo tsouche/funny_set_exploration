@@ -53,8 +53,18 @@ struct Args {
     ///   --restart 7 0   Restart from size 7, batch 0 (first file)
     /// 
     /// This allows resuming processing after interruption
-    #[arg(long, num_args = 2, value_names = ["SIZE", "BATCH"])]
+    #[arg(long, num_args = 2, value_names = ["SIZE", "BATCH"], conflicts_with_all = ["size", "audit"])]
     restart: Option<Vec<u32>>,
+
+    /// Audit existing files for a specific size and create count summary
+    /// 
+    /// Examples:
+    ///   --audit 6   Count all size 6 files and create size_06_count.txt
+    /// 
+    /// This scans all files, counts lists, and creates a summary report
+    /// without processing any new lists
+    #[arg(long, conflicts_with_all = ["size", "restart"])]
+    audit: Option<u8>,
 
     /// Output directory path (optional)
     /// 
@@ -147,9 +157,35 @@ fn main() {
         None
     };
 
-    use crate::list_of_nsl::ListOfNSL;
+    use crate::list_of_nsl::{ListOfNSL, audit_size_files};
 
     banner("Funny Set Exploration)");
+    
+    // =====================================================================
+    // AUDIT MODE: Count existing files for a specific size
+    // =====================================================================
+    if let Some(audit_size) = args.audit {
+        if audit_size < 3 || audit_size > 18 {
+            eprintln!("Error: Audit size {} out of range (3-18)", audit_size);
+            std::process::exit(1);
+        }
+        
+        test_print(&format!("AUDIT MODE: Counting files for size {}", audit_size));
+        
+        let base_path = args.output_path.as_deref().unwrap_or(".");
+        test_print(&format!("Directory: {}\n", base_path));
+        
+        match audit_size_files(base_path, audit_size) {
+            Ok(()) => {
+                test_print("\nAudit completed successfully!");
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("Error during audit: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
     
     if let Some((restart_size, restart_batch)) = restart_params {
         // =====================================================================

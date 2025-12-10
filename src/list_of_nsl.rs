@@ -495,6 +495,113 @@ impl Default for ListOfNSL {
     }
 }
 
+/// Audit and count all existing output files for a given target size
+/// Creates a summary report file with counts per batch
+pub fn audit_size_files(base_path: &str, target_size: u8) -> std::io::Result<()> {
+    use std::fs;
+    use std::io::Write;
+    use std::collections::BTreeMap;
+    
+    test_print(&format!("\nAuditing files for size {:02}...", target_size));
+    
+    // Collect all files for this target size
+    // Key: (source_batch, target_batch), Value: (filename, count)
+    let mut file_info: BTreeMap<(u32, u32), (String, u64)> = BTreeMap::new();
+    
+    let entries = fs::read_dir(base_path)?;
+    let pattern = format!("_to_{:02}_batch_", target_size);
+    
+    for entry in entries.flatten() {
+        if let Some(name) = entry.file_name().to_str() {
+            if name.starts_with("nsl_") && name.contains(&pattern) && name.ends_with(".rkyv") {
+                // Parse source and target batch numbers
+                // Format: nsl_XX_batch_YYYYY_to_ZZ_batch_BBBBB.rkyv
+                if let Some(to_pos) = name.find("_to_") {
+                    let before_to = &name[..to_pos];
+                    let after_to = &name[to_pos + 4..];
+                    
+                    // Extract source batch
+                    if let Some(src_batch_pos) = before_to.rfind("_batch_") {
+                        let src_batch_str = &before_to[src_batch_pos + 7..];
+                        if let Ok(source_batch) = src_batch_str.parse::<u32>() {
+                            // Extract target batch
+                            if let Some(tgt_batch_pos) = after_to.rfind("_batch_") {
+                                let tgt_batch_str = &after_to[tgt_batch_pos + 7..after_to.len() - 5]; // -5 for ".rkyv"
+                                if let Ok(target_batch) = tgt_batch_str.parse::<u32>() {
+                                    // Read file and count entries
+                                    let path = entry.path();
+                                    if let Some(vec_nlist) = read_from_file_serialized(path.to_str().unwrap()) {
+                                        let count = vec_nlist.len() as u64;
+                                        file_info.insert((source_batch, target_batch), (name.to_string(), count));
+                                        test_print(&format!("   ... counted {:>10} lists in {}",
+                                            count.separated_string(), name));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    if file_info.is_empty() {
+        test_print(&format!("No files found for size {:02}", target_size));
+        return Ok(());
+    }
+    
+    // Create summary report file
+    let report_filename = format!("{}/size_{:02}_count.txt", base_path, target_size);
+    let mut report_file = fs::File::create(&report_filename)?;
+    
+    // Write header
+    writeln!(report_file, "# File Count Summary for no-set-{:02} lists", target_size)?;
+    writeln!(report_file, "# Generated: {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"))?;
+    writeln!(report_file, "# Format: source_batch target_batch | lists_in_file | cumulative_total | filename")?;
+    writeln!(report_file, "#")?;
+    
+    // Sort by target_batch (descending), then source_batch (descending)
+    let mut sorted_files: Vec<_> = file_info.iter().collect();
+    sorted_files.sort_by(|a, b| {
+        match b.0.1.cmp(&a.0.1) { // target_batch descending
+            std::cmp::Ordering::Equal => b.0.0.cmp(&a.0.0), // source_batch descending
+            other => other,
+        }
+    });
+    
+    // Calculate cumulative totals (from highest to lowest batch)
+    let mut cumulative = 0u64;
+    let mut report_lines = Vec::new();
+    
+    for ((source_batch, target_batch), (filename, count)) in sorted_files.iter() {
+        cumulative += count;
+        report_lines.push(format!(
+            "{:05} {:05} | {:>15} | {:>15} | {}",
+            source_batch,
+            target_batch,
+            count.separated_string(),
+            cumulative.separated_string(),
+            filename
+        ));
+    }
+    
+    // Write lines (still in descending order)
+    for line in &report_lines {
+        writeln!(report_file, "{}", line)?;
+    }
+    
+    // Write summary at the end
+    writeln!(report_file, "#")?;
+    writeln!(report_file, "# Total files: {}", file_info.len())?;
+    writeln!(report_file, "# Total lists: {}", cumulative.separated_string())?;
+    
+    test_print(&format!("\nSummary written to: {}", report_filename));
+    test_print(&format!("   Total files: {}", file_info.len()));
+    test_print(&format!("   Total lists: {}", cumulative.separated_string()));
+    
+    Ok(())
+}
+
 /// Helper to print large numbers with thousand separators and timing info
 pub fn created_a_total_of(nb: u64, size: u8, elapsed_secs: f64) {
     let hours = (elapsed_secs / 3600.0) as u64;
