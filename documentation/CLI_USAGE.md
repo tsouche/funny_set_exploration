@@ -157,6 +157,7 @@ cargo run --release -- --compact 12 -o "T:\data\funny_set_exploration"
 ```
 
 This mode:
+
 - Reads all files for the specified output size
 - Consolidates them into 10M-entry batches
 - Creates new files with format: `nsl_compacted_{size}_batch_{batch}_from_{first_source}.rkyv`

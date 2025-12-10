@@ -110,7 +110,34 @@ struct Args {
     #[arg(long, conflicts_with_all = ["size", "restart", "unitary", "count"])]
     compact: Option<u8>,
 
+    /// Input directory path (optional)
+    /// 
+    /// Directory to read input files from.
+    /// 
+    /// Usage by mode:
+    /// - count: Only uses -i (reads files to count)
+    /// - size/range: Uses -i for input, -o for output (if only one given, uses for both)
+    /// - unitary: Uses -i for input (writes to same dir unless -o specified)
+    /// - restart: Uses -i for input, -o for output (if only one given, uses for both)
+    /// - compact: Uses -i for input files to compact
+    /// 
+    /// Examples:
+    ///   Windows: T:\data\funny_set_exploration
+    ///   Linux:   /mnt/nas/data/funny_set_exploration
+    ///   Relative: ./input
+    #[arg(short, long)]
+    input_path: Option<String>,
+
     /// Output directory path (optional)
+    /// 
+    /// Directory to write output files to.
+    /// 
+    /// Usage by mode:
+    /// - count: Not used
+    /// - size/range: Uses for output (if omitted, uses -i or current dir)
+    /// - unitary: Uses for output (if omitted, uses -i directory)
+    /// - restart: Uses for output (if omitted, uses -i or current dir)
+    /// - compact: Uses for compacted output files
     /// 
     /// Examples:
     ///   Windows: T:\data\funny_set_exploration
@@ -234,10 +261,13 @@ fn main() {
         test_print(&format!("COMPACT MODE: Consolidating files for size {}", compact_size));
         test_print("This will replace multiple small files with larger 10M-entry batches\n");
         
-        let base_path = args.output_path.as_deref().unwrap_or(".");
-        test_print(&format!("Directory: {}\n", base_path));
+        // Compact mode: read from input_path, write to output_path (or input_path if not specified)
+        let input_dir = args.input_path.as_deref().unwrap_or(".");
+        let output_dir = args.output_path.as_deref().unwrap_or(input_dir);
+        test_print(&format!("Input directory: {}", input_dir));
+        test_print(&format!("Output directory: {}\n", output_dir));
         
-        match compact_size_files(base_path, compact_size, MAX_NLISTS_PER_FILE) {
+        match compact_size_files(input_dir, output_dir, compact_size, MAX_NLISTS_PER_FILE) {
             Ok(()) => {
                 test_print("\nCompaction completed successfully!");
                 std::process::exit(0);
@@ -263,10 +293,11 @@ fn main() {
         
         test_print(&format!("COUNT MODE: Counting files for size {}", count_size));
         
-        let base_path = args.output_path.as_deref().unwrap_or(".");
-        test_print(&format!("Directory: {}\n", base_path));
+        // Count mode: only uses input_path
+        let input_dir = args.input_path.as_deref().unwrap_or(".");
+        test_print(&format!("Directory: {}\n", input_dir));
         
-        match count_size_files(base_path, count_size) {
+        match count_size_files(input_dir, count_size) {
             Ok(()) => {
                 test_print("\nCount completed successfully!");
                 std::process::exit(0);
@@ -287,18 +318,24 @@ fn main() {
         test_print("Strategy: Stack computation + Heap I/O");
         test_print(&format!("Batch size: {} entries/file (~2GB, compact)", MAX_NLISTS_PER_FILE.separated_string()));
         
-        let base_path = if let Some(ref path) = args.output_path {
-            test_print(&format!("Output directory: {}", path));
-            path.as_str()
-        } else {
-            test_print("Output directory: current directory");
-            "."
+        // Restart mode: if only one path given, use for both; otherwise use both
+        let input_dir = args.input_path.as_deref();
+        let output_dir = args.output_path.as_deref();
+        
+        let (read_path, write_path) = match (input_dir, output_dir) {
+            (Some(i), Some(o)) => (i, o),
+            (Some(i), None) => (i, i),
+            (None, Some(o)) => (o, o),
+            (None, None) => (".", ".")
         };
+        
+        test_print(&format!("Input directory: {}", read_path));
+        test_print(&format!("Output directory: {}", write_path));
         
         // If force flag is set, regenerate count file for target size
         if args.force {
             test_print(&format!("\nFORCE MODE: Regenerating count file for size {}...", restart_size + 1));
-            match count_size_files(base_path, restart_size + 1) {
+            match count_size_files(write_path, restart_size + 1) {
                 Ok(()) => test_print("Count file regenerated successfully\n"),
                 Err(e) => {
                     eprintln!("Error regenerating count file: {}", e);
@@ -309,11 +346,8 @@ fn main() {
         
         test_print("\n======================\n");
 
-        // Initialize ListOfNSL with optional custom path
-        let mut no_set_lists: ListOfNSL = match args.output_path {
-            Some(path) => ListOfNSL::with_path(&path),
-            None => ListOfNSL::new(),
-        };
+        // Initialize ListOfNSL with paths
+        let mut no_set_lists: ListOfNSL = ListOfNSL::with_paths(read_path, write_path);
 
         // Process from restart point through size 18
         // restart_size is the INPUT size, so we create output starting from restart_size+1
@@ -349,18 +383,17 @@ fn main() {
         test_print("Strategy: Stack computation + Heap I/O");
         test_print(&format!("Batch size: {} entries/file (~2GB, compact)", MAX_NLISTS_PER_FILE.separated_string()));
         
-        let base_path = if let Some(ref path) = args.output_path {
-            test_print(&format!("Output directory: {}", path));
-            path.as_str()
-        } else {
-            test_print("Output directory: current directory");
-            "."
-        };
+        // Unitary mode: if -o not given, write to input directory; if -i not given, read from current
+        let input_dir = args.input_path.as_deref().unwrap_or(".");
+        let output_dir = args.output_path.as_deref().unwrap_or(input_dir);
+        
+        test_print(&format!("Input directory: {}", input_dir));
+        test_print(&format!("Output directory: {}", output_dir));
         
         // If force flag is set, regenerate count file for target size
         if args.force {
             test_print(&format!("\nFORCE MODE: Regenerating count file for size {}...", unitary_size + 1));
-            match count_size_files(base_path, unitary_size + 1) {
+            match count_size_files(output_dir, unitary_size + 1) {
                 Ok(()) => test_print("Count file regenerated successfully\n"),
                 Err(e) => {
                     eprintln!("Error regenerating count file: {}", e);
@@ -371,11 +404,8 @@ fn main() {
         
         test_print("\n======================\n");
 
-        // Initialize ListOfNSL with optional custom path
-        let mut no_set_lists: ListOfNSL = match args.output_path {
-            Some(path) => ListOfNSL::with_path(&path),
-            None => ListOfNSL::new(),
-        };
+        // Initialize ListOfNSL with paths
+        let mut no_set_lists: ListOfNSL = ListOfNSL::with_paths(input_dir, output_dir);
 
         // Process only the specified batch
         test_print(&format!("Processing input size {} batch {}:", unitary_size, unitary_batch));

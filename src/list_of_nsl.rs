@@ -34,7 +34,8 @@ pub struct ListOfNSL {
     pub new_output_batch: u32,         // Current output file batch - CONTINUOUS across all source files
     pub new_file_list_count: u64,      // Lists saved to current output file
     pub new_total_list_count: u64,     // Total lists created for target size
-    pub base_path: String,             // base directory for saving/loading files
+    pub input_path: String,            // base directory for loading input files
+    pub output_path: String,           // base directory for saving output files
     pub computation_time: f64,         // time spent in core algorithm
     pub file_io_time: f64,             // time spent in file I/O operations
     pub conversion_time: f64,          // time spent converting between formats
@@ -53,14 +54,15 @@ impl ListOfNSL {
             new_output_batch: 0,
             new_file_list_count: 0,
             new_total_list_count: 0,
-            base_path: String::from("."),
+            input_path: String::from("."),
+            output_path: String::from("."),
             computation_time: 0.0,
             file_io_time: 0.0,
             conversion_time: 0.0,
         }
     }
     
-    /// Creates a new ListOfNSLHybrid with a custom base path
+    /// Creates a new ListOfNSL with a custom base path (uses same for input and output)
     pub fn with_path(base_path: &str) -> Self {
         Self {
             current_size: 0,
@@ -72,7 +74,28 @@ impl ListOfNSL {
             new_output_batch: 0,
             new_file_list_count: 0,
             new_total_list_count: 0,
-            base_path: String::from(base_path),
+            input_path: String::from(base_path),
+            output_path: String::from(base_path),
+            computation_time: 0.0,
+            file_io_time: 0.0,
+            conversion_time: 0.0,
+        }
+    }
+    
+    /// Creates a new ListOfNSL with separate input and output paths
+    pub fn with_paths(input_path: &str, output_path: &str) -> Self {
+        Self {
+            current_size: 0,
+            current: Vec::new(),
+            current_file_batch: 0,
+            current_file_list_count: 0,
+            current_total_list_count: 0,
+            new: Vec::new(),
+            new_output_batch: 0,
+            new_file_list_count: 0,
+            new_total_list_count: 0,
+            input_path: String::from(input_path),
+            output_path: String::from(output_path),
             computation_time: 0.0,
             file_io_time: 0.0,
             conversion_time: 0.0,
@@ -170,7 +193,7 @@ impl ListOfNSL {
             remaining_cards_list: nlist.remaining_cards_list.iter().copied().collect(),
         }).collect();
         
-        let file = output_filename(&self.base_path, 0, 0, 3, 0);
+        let file = output_filename(&self.output_path, 0, 0, 3, 0);
         
         let io_start = std::time::Instant::now();
         match save_to_file_serialized(&compacted, &file) {
@@ -195,7 +218,7 @@ impl ListOfNSL {
     /// Reads output files from previous processing step that target current_size
     fn refill_current_from_file(&mut self) -> bool {
         // Find input file: any file that was output to create current_size at current_file_batch
-        let filename = match find_input_filename(&self.base_path, self.current_size, self.current_file_batch) {
+        let filename = match find_input_filename(&self.input_path, self.current_size, self.current_file_batch) {
             Some(f) => f,
             None => {
                 debug_print(&format!("refill_current_from_file: No file found for size {:02} batch {:05}",
@@ -240,7 +263,7 @@ impl ListOfNSL {
     /// Save current batch (converts NoSetList to NoSetListSerialized for compact storage)
     fn save_new_to_file(&mut self) -> bool {
         let file = output_filename(
-            &self.base_path, 
+            &self.output_path, 
             self.current_size, 
             self.current_file_batch,
             self.current_size + 1, 
@@ -443,7 +466,7 @@ impl ListOfNSL {
         // Read baseline from count file (or scan files if count file doesn't exist)
         // This gives us the baseline count and next available batch number
         let (existing_count, next_batch) = read_baseline_from_count_file(
-            &self.base_path,
+            &self.output_path,
             self.current_size + 1,
             start_batch
         );
@@ -518,7 +541,7 @@ impl ListOfNSL {
         
         // Read baseline from count file (files from batches < input_batch)
         let (existing_count, next_batch) = read_baseline_from_count_file(
-            &self.base_path,
+            &self.output_path,
             self.current_size + 1,
             input_batch
         );
@@ -676,7 +699,7 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
 
 /// Compact small output files into larger 10M-entry batches
 /// Reads all files for a given size, consolidates them, and replaces originals
-pub fn compact_size_files(base_path: &str, target_size: u8, batch_size: u64) -> std::io::Result<()> {
+pub fn compact_size_files(input_dir: &str, output_dir: &str, target_size: u8, batch_size: u64) -> std::io::Result<()> {
     use std::fs;
     use std::collections::BTreeMap;
     
@@ -687,7 +710,7 @@ pub fn compact_size_files(base_path: &str, target_size: u8, batch_size: u64) -> 
     
     // Find all files for this target size
     let pattern = format!("*_to_{:02}_batch_*.rkyv", target_size);
-    let paths = fs::read_dir(base_path)?
+    let paths = fs::read_dir(input_dir)?
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
         .filter(|path| {
@@ -733,7 +756,7 @@ pub fn compact_size_files(base_path: &str, target_size: u8, batch_size: u64) -> 
     let mut total_loaded = 0u64;
     
     for (tgt_batch, (src_batch, filename)) in &file_map {
-        let filepath = format!("{}/{}", base_path, filename);
+        let filepath = format!("{}/{}", input_dir, filename);
         test_print(&format!("   Loading {} (source batch {:05}, target batch {:05})...", 
             filename, src_batch, tgt_batch));
         
@@ -771,7 +794,7 @@ pub fn compact_size_files(base_path: &str, target_size: u8, batch_size: u64) -> 
         if new_file_lists.len() as u64 >= batch_size {
             // Save compacted file
             let filename = format!("{}/nsl_compacted_{:02}_batch_{:05}_from_{:05}.rkyv",
-                base_path, target_size, new_batch, first_source_batch.unwrap());
+                output_dir, target_size, new_batch, first_source_batch.unwrap());
             
             test_print(&format!("   Creating compacted batch {:05} ({} lists, from source batch {:05})...",
                 new_batch, new_file_lists.len().separated_string(), first_source_batch.unwrap()));
@@ -788,7 +811,7 @@ pub fn compact_size_files(base_path: &str, target_size: u8, batch_size: u64) -> 
     // Save remaining lists
     if !new_file_lists.is_empty() {
         let filename = format!("{}/nsl_compacted_{:02}_batch_{:05}_from_{:05}.rkyv",
-            base_path, target_size, new_batch, first_source_batch.unwrap());
+            output_dir, target_size, new_batch, first_source_batch.unwrap());
         
         test_print(&format!("   Creating final compacted batch {:05} ({} lists, from source batch {:05})...",
             new_batch, new_file_lists.len().separated_string(), first_source_batch.unwrap()));
