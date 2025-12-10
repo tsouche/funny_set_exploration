@@ -76,6 +76,9 @@ cargo build --release
 
 # Count existing files
 ./target/release/funny_set_exploration --count 6 -o T:\data\funny_set_exploration
+
+# Compact small files into larger batches
+./target/release/funny_set_exploration --compact 8 -o T:\data\funny_set_exploration
 ```
 
 ### CLI Options
@@ -102,6 +105,12 @@ Options:
       --count <SIZE>
           Count existing files for target size, create summary report
           Creates no_set_list_count_XX.txt without processing new lists
+
+      --compact <SIZE>
+          Compact small output files into larger 10M-entry batches
+          SIZE refers to OUTPUT size. Consolidates files and replaces originals.
+          New format: nsl_compacted_{size}_batch_{batch}_from_{first_source}.rkyv
+          Use when later processing waves create many small files.
 
       --force
           Force regeneration of count file (use with --restart or --unitary)

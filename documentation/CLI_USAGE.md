@@ -2,7 +2,7 @@
 
 ## Overview
 
-Version 0.4.1 provides four operational modes: normal size processing, restart from specific batch, unitary processing (single batch - the only canonical way to fix defective files), and count mode. The program uses a hybrid stack/heap implementation for optimal performance.
+Version 0.4.1 provides five operational modes: normal size processing, restart from specific batch, unitary processing (single batch - the only canonical way to fix defective files), count mode, and compact mode for consolidating small files. The program uses a hybrid stack/heap implementation for optimal performance.
 
 ## Running the Program
 
@@ -143,6 +143,25 @@ Count existing files without processing:
 # Count all size 6 files, create no_set_list_count_06.txt
 cargo run --release -- --count 6 -o "T:\data\funny_set_exploration"
 ```
+
+### Compact Mode
+
+Consolidate small files into larger batches (for later waves with ratio < 1.0):
+
+```powershell
+# Compact all size 8 files into 10M-entry batches
+cargo run --release -- --compact 8 -o "T:\data\funny_set_exploration"
+
+# Compact size 12 files
+cargo run --release -- --compact 12 -o "T:\data\funny_set_exploration"
+```
+
+This mode:
+- Reads all files for the specified output size
+- Consolidates them into 10M-entry batches
+- Creates new files with format: `nsl_compacted_{size}_batch_{batch}_from_{first_source}.rkyv`
+- Deletes original files after successful compaction
+- Tracks the first source batch number for each compacted file
 
 ## Prerequisites
 

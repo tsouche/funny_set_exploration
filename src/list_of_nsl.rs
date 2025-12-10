@@ -674,6 +674,185 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
     Ok(())
 }
 
+/// Compact small output files into larger 10M-entry batches
+/// Reads all files for a given size, consolidates them, and replaces originals
+pub fn compact_size_files(base_path: &str, target_size: u8, batch_size: u64) -> std::io::Result<()> {
+    use std::fs;
+    use std::collections::BTreeMap;
+    
+    test_print(&format!("\nCompacting files for size {:02}...", target_size));
+    test_print(&format!("Target batch size: {} lists per file", batch_size.separated_string()));
+    
+    let start_time = std::time::Instant::now();
+    
+    // Find all files for this target size
+    let pattern = format!("*_to_{:02}_batch_*.rkyv", target_size);
+    let paths = fs::read_dir(base_path)?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| {
+            if let Some(name) = path.file_name() {
+                let name_str = name.to_string_lossy();
+                // Skip already compacted files
+                !name_str.contains("compacted") && 
+                wildmatch::WildMatch::new(&pattern).matches(&name_str)
+            } else {
+                false
+            }
+        })
+        .collect::<Vec<_>>();
+    
+    if paths.is_empty() {
+        test_print("   No files found to compact");
+        return Ok(());
+    }
+    
+    test_print(&format!("   Found {} files to compact", paths.len()));
+    
+    // Parse filenames and sort by target batch number
+    let mut file_map: BTreeMap<u32, (u32, String)> = BTreeMap::new(); // target_batch -> (source_batch, filename)
+    
+    for path in &paths {
+        if let Some(filename) = path.file_name() {
+            let name = filename.to_string_lossy();
+            // Parse: nsl_{src:02}_batch_{src_batch:05}_to_{tgt:02}_batch_{tgt_batch:05}.rkyv
+            let parts: Vec<&str> = name.split('_').collect();
+            if parts.len() >= 8 {
+                if let (Ok(src_batch), Ok(tgt_batch)) = (
+                    parts[3].parse::<u32>(),
+                    parts[7].trim_end_matches(".rkyv").parse::<u32>()
+                ) {
+                    file_map.insert(tgt_batch, (src_batch, name.to_string()));
+                }
+            }
+        }
+    }
+    
+    // Load all lists from all files
+    let mut all_lists: Vec<(NoSetListSerialized, u32)> = Vec::new(); // (list, source_batch)
+    let mut total_loaded = 0u64;
+    
+    for (tgt_batch, (src_batch, filename)) in &file_map {
+        let filepath = format!("{}/{}", base_path, filename);
+        test_print(&format!("   Loading {} (source batch {:05}, target batch {:05})...", 
+            filename, src_batch, tgt_batch));
+        
+        match load_lists_from_file(&filepath) {
+            Ok(lists) => {
+                let count = lists.len();
+                total_loaded += count as u64;
+                for list in lists {
+                    all_lists.push((list, *src_batch));
+                }
+                test_print(&format!("      Loaded {} lists", count.separated_string()));
+            }
+            Err(e) => {
+                eprintln!("   Error loading {}: {}", filename, e);
+                return Err(e);
+            }
+        }
+    }
+    
+    test_print(&format!("\n   Total lists loaded: {}", total_loaded.separated_string()));
+    
+    // Create compacted files
+    let mut new_batch = 0u32;
+    let mut new_file_lists: Vec<NoSetListSerialized> = Vec::new();
+    let mut first_source_batch: Option<u32> = None;
+    let mut files_created = 0usize;
+    
+    for (list, src_batch) in all_lists {
+        if first_source_batch.is_none() {
+            first_source_batch = Some(src_batch);
+        }
+        
+        new_file_lists.push(list);
+        
+        if new_file_lists.len() as u64 >= batch_size {
+            // Save compacted file
+            let filename = format!("{}/nsl_compacted_{:02}_batch_{:05}_from_{:05}.rkyv",
+                base_path, target_size, new_batch, first_source_batch.unwrap());
+            
+            test_print(&format!("   Creating compacted batch {:05} ({} lists, from source batch {:05})...",
+                new_batch, new_file_lists.len().separated_string(), first_source_batch.unwrap()));
+            
+            save_compacted_batch(&filename, &new_file_lists)?;
+            
+            new_batch += 1;
+            files_created += 1;
+            new_file_lists.clear();
+            first_source_batch = None;
+        }
+    }
+    
+    // Save remaining lists
+    if !new_file_lists.is_empty() {
+        let filename = format!("{}/nsl_compacted_{:02}_batch_{:05}_from_{:05}.rkyv",
+            base_path, target_size, new_batch, first_source_batch.unwrap());
+        
+        test_print(&format!("   Creating final compacted batch {:05} ({} lists, from source batch {:05})...",
+            new_batch, new_file_lists.len().separated_string(), first_source_batch.unwrap()));
+        
+        save_compacted_batch(&filename, &new_file_lists)?;
+        files_created += 1;
+    }
+    
+    // Delete original files
+    test_print("\n   Deleting original files...");
+    for path in &paths {
+        if let Err(e) = fs::remove_file(path) {
+            eprintln!("   Warning: Could not delete {:?}: {}", path, e);
+        }
+    }
+    
+    let elapsed = start_time.elapsed().as_secs_f64();
+    test_print(&format!("\nCompaction completed in {:.2} seconds", elapsed));
+    test_print(&format!("   Original files: {}", paths.len()));
+    test_print(&format!("   Compacted files: {}", files_created));
+    test_print(&format!("   Total lists: {}", total_loaded.separated_string()));
+    test_print(&format!("   Compression ratio: {:.1}x", paths.len() as f64 / files_created as f64));
+    
+    Ok(())
+}
+
+/// Load lists from a file (helper for compact mode)
+fn load_lists_from_file(filepath: &str) -> std::io::Result<Vec<NoSetListSerialized>> {
+    let file = File::open(filepath)?;
+    let mmap = unsafe { Mmap::map(&file)? };
+    
+    match check_archived_root::<Vec<NoSetListSerialized>>(&mmap[..]) {
+        Ok(archived_lists) => {
+            let lists: Vec<NoSetListSerialized> = archived_lists
+                .deserialize(&mut rkyv::Infallible)
+                .expect("Deserialization should never fail with Infallible");
+            Ok(lists)
+        }
+        Err(e) => {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Archive validation failed: {:?}", e)
+            ))
+        }
+    }
+}
+
+/// Save compacted batch to file
+fn save_compacted_batch(filepath: &str, lists: &[NoSetListSerialized]) -> std::io::Result<()> {
+    use rkyv::ser::{serializers::AllocSerializer, Serializer};
+    
+    // Convert slice to Vec for serialization
+    let lists_vec: Vec<NoSetListSerialized> = lists.to_vec();
+    
+    let mut serializer = AllocSerializer::<4096>::default();
+    serializer.serialize_value(&lists_vec)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Serialization error: {:?}", e)))?;
+    
+    let bytes = serializer.into_serializer().into_inner();
+    std::fs::write(filepath, bytes)?;
+    
+    Ok(())
+}
+
 /// Helper to print large numbers with thousand separators and timing info
 pub fn created_a_total_of(nb: u64, size: u8, elapsed_secs: f64) {
     let hours = (elapsed_secs / 3600.0) as u64;

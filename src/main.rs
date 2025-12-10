@@ -91,8 +91,24 @@ struct Args {
     /// 
     /// This scans all files, counts lists, and creates a summary report
     /// without processing any new lists
-    #[arg(long, conflicts_with_all = ["size", "restart", "unitary"])]
+    #[arg(long, conflicts_with_all = ["size", "restart", "unitary", "compact"])]
     count: Option<u8>,
+
+    /// Compact small output files into larger batches: <SIZE>
+    /// 
+    /// SIZE refers to the OUTPUT size to compact. Reads all files for this size,
+    /// consolidates them into 10M-entry batches, and replaces original files.
+    /// 
+    /// New filename format: nsl_compacted_{size:02}_batch_{batch:05}_from_{first_source_batch:05}.rkyv
+    /// 
+    /// Examples:
+    ///   --compact 8   Compact all size 8 files into 10M-entry batches
+    ///   --compact 12  Compact all size 12 files into 10M-entry batches
+    /// 
+    /// Use when later processing waves create many small files (ratio < 1.0).
+    /// Original files are deleted after successful compaction.
+    #[arg(long, conflicts_with_all = ["size", "restart", "unitary", "count"])]
+    compact: Option<u8>,
 
     /// Output directory path (optional)
     /// 
@@ -199,9 +215,39 @@ fn main() {
         None
     };
 
-    use crate::list_of_nsl::{ListOfNSL, count_size_files};
+    use crate::list_of_nsl::{ListOfNSL, count_size_files, compact_size_files};
 
     banner("Funny Set Exploration)");
+    
+    // =====================================================================
+    // COMPACT MODE: Consolidate small files into larger batches
+    // =====================================================================
+    if let Some(compact_size) = args.compact {
+        // Initialize log file for compact mode
+        init_log_file();
+        
+        if compact_size < 3 || compact_size > 18 {
+            eprintln!("Error: Compact size {} out of range (3-18)", compact_size);
+            std::process::exit(1);
+        }
+        
+        test_print(&format!("COMPACT MODE: Consolidating files for size {}", compact_size));
+        test_print("This will replace multiple small files with larger 10M-entry batches\n");
+        
+        let base_path = args.output_path.as_deref().unwrap_or(".");
+        test_print(&format!("Directory: {}\n", base_path));
+        
+        match compact_size_files(base_path, compact_size, MAX_NLISTS_PER_FILE) {
+            Ok(()) => {
+                test_print("\nCompaction completed successfully!");
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("Error during compaction: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
     
     // =====================================================================
     // COUNT MODE: Count existing files for a specific size
