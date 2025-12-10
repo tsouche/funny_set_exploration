@@ -623,7 +623,7 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
     }
     
     // Create summary report file
-    let report_filename = format!("{}/size_{:02}_count.txt", base_path, target_size);
+    let report_filename = format!("{}/no_set_list_count_{:02}.txt", base_path, target_size);
     let mut report_file = fs::File::create(&report_filename)?;
     
     // Write header
@@ -697,7 +697,7 @@ fn read_baseline_from_count_file(
     use std::fs;
     use std::io::{BufRead, BufReader};
     
-    let count_filename = format!("{}/size_{:02}_count.txt", base_path, target_size);
+    let count_filename = format!("{}/no_set_list_count_{:02}.txt", base_path, target_size);
     
     // Try to open count file
     let file = match fs::File::open(&count_filename) {

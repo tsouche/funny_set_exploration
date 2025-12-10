@@ -101,7 +101,7 @@ Options:
 
       --count <SIZE>
           Count existing files for target size, create summary report
-          Creates size_XX_count.txt without processing new lists
+          Creates no_set_list_count_XX.txt without processing new lists
 
       --force
           Force regeneration of count file (use with --restart or --unitary)

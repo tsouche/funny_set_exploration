@@ -94,7 +94,7 @@ Options:
 
       --count <SIZE>
           Count existing files for target size
-          Creates size_XX_count.txt summary report
+          Creates no_set_list_count_XX.txt summary report
 
       --force
           Force regeneration of count file (use with --restart or --unitary)
@@ -140,7 +140,7 @@ cargo run --release -- --unitary 5 2 --force -o "T:\data\funny_set_exploration"
 Count existing files without processing:
 
 ```powershell
-# Count all size 6 files, create size_06_count.txt
+# Count all size 6 files, create no_set_list_count_06.txt
 cargo run --release -- --count 6 -o "T:\data\funny_set_exploration"
 ```
 

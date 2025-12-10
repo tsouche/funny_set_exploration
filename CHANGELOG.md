@@ -41,8 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Count mode**: New `--count <SIZE>` command to count existing files without processing
   - Scans all output files for a given target size
   - Counts lists in each file
-  - Creates summary report: `size_XX_count.txt`
-  - Report format: source_batch, target_batch, lists_in_file, cumulative_total, filename
+  - Creates summary report: `no_set_list_count_XX.txt`
+  - Report format: source_batch, target_batch, cumulative_nb_lists, nb_lists_in_file, filename
   - Files listed in descending batch order (highest first)
   - Useful for verifying counts and tracking progress
 - **Restart capability**: Resume processing from a specific input size and batch

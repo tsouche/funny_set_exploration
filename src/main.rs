@@ -58,7 +58,7 @@ struct Args {
     ///   --restart 5 2   Load input size 5 batch 2, continue through size 18
     ///   --restart 7 0   Load input size 7 batch 0, continue through size 18
     /// 
-    /// By default, reads baseline counts from count file (size_XX_count.txt).
+    /// By default, reads baseline counts from count file (no_set_list_count_XX.txt).
     /// Use --force to regenerate count file by scanning all files.
     #[arg(long, num_args = 2, value_names = ["SIZE", "BATCH"], conflicts_with_all = ["size", "count", "unitary"])]
     restart: Option<Vec<u32>>,
@@ -87,7 +87,7 @@ struct Args {
     /// Count existing files for a specific size and create summary report
     /// 
     /// Examples:
-    ///   --count 6   Count all size 6 files and create size_06_count.txt
+    ///   --count 6   Count all size 6 files and create no_set_list_count_06.txt
     /// 
     /// This scans all files, counts lists, and creates a summary report
     /// without processing any new lists
