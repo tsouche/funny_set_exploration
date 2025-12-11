@@ -356,7 +356,7 @@ fn main() {
             
             if source_size == restart_size {
                 // First iteration: start from specified batch of the input size
-                test_print(&format!("Start processing files to create no-set-lists of size {} (from input batch {}):", 
+                test_print(&format!("Start processing files to create no-set-lists of size {} (from input batch {}):\n", 
                     target_size, restart_batch));
                 let _nb_new = no_set_lists.process_from_batch(
                     source_size,  // Input size
@@ -365,7 +365,7 @@ fn main() {
                 );
             } else {
                 // Subsequent iterations: process all files
-                test_print(&format!("Start processing files to create no-set-lists of size {}:", target_size));
+                test_print(&format!("Start processing files to create no-set-lists of size {}:\n", target_size));
                 let _nb_new = no_set_lists.process_all_files_of_current_size_n(
                     source_size, 
                     &MAX_NLISTS_PER_FILE

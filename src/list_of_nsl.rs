@@ -311,7 +311,7 @@ impl ListOfNSL {
     /// Process one input file using stack-optimized computation
     /// Creates output files with modular naming and closes output when input exhausted
     fn process_one_file_of_current_size_n(&mut self, max: &u64) -> u64 {
-        test_print(&format!("   ... processing batch {} of size {:02} ({} input lists)", 
+        debug_print(&format!("   ... processing batch {} of size {:02} ({} input lists)", 
             self.current_file_batch, self.current_size, self.current.len()));
         debug_print(&format!("process_one_file_of_current_size_n: Processing batch {} \
             of no-set-{:02} ({} lists)", self.current_file_batch, self.current_size, 
@@ -345,7 +345,7 @@ impl ListOfNSL {
             
             // Check if we need to save
             if self.new.len() as u64 >= *max {
-                test_print(&format!("   ... saving batch ({} lists), output batch {}", 
+                test_print(&format!("   ... saving batch ({:>10} lists), output batch {}", 
                     self.new.len().separated_string(), self.new_output_batch));
                 if !self.save_new_to_file() {
                     test_print("   ... ERROR: Failed to save batch");
@@ -358,7 +358,7 @@ impl ListOfNSL {
         
         // Save any remaining lists from this input file (even if < max)
         if !self.new.is_empty() {
-            test_print(&format!("   ... saving final batch ({} lists), output batch {}", 
+            test_print(&format!("   ... saving final batch ({} lists), output batch {}\n", 
                 self.new.len().separated_string(), self.new_output_batch));
             debug_print(&format!("process_one_file_of_current_size_n: saving final batch of {}", 
                 self.new.len()));
@@ -489,12 +489,12 @@ impl ListOfNSL {
             
             let loaded = self.refill_current_from_file();
             if loaded {
-                test_print(&format!("   ... loaded {} lists from batch {}", 
-                    self.current.len(), self.current_file_batch));
+                test_print(&format!("   ... loaded {:>10} lists from batch {}", 
+                    self.current.len().separated_string(), self.current_file_batch));
                 debug_print(&format!("process_from_batch: loaded {} n-lists", 
                     self.current.len()));
                 self.process_one_file_of_current_size_n(max);
-                test_print(&format!("   ... processing complete for batch {}", self.current_file_batch));
+                debug_print(&format!("   ... processing complete for batch {}", self.current_file_batch));
                 self.current_file_batch += 1;
             } else {
                 debug_print(&format!("process_from_batch: no more files for size {:02}", 
@@ -1135,12 +1135,12 @@ fn find_input_filename(
     use std::fs;
     
     let pattern = format!("_to_{:02}_batch_{:05}.rkyv", target_size, target_batch);
-    test_print(&format!("   ... looking for input file matching: *{} in {}", pattern, base_path));
+    debug_print(&format!("   ... looking for input file matching: *{} in {}", pattern, base_path));
     
     let entries = match fs::read_dir(base_path) {
         Ok(e) => e,
         Err(err) => {
-            test_print(&format!("   ... ERROR: Cannot read directory {}: {}", base_path, err));
+            debug_print(&format!("   ... ERROR: Cannot read directory {}: {}", base_path, err));
             return None;
         }
     };
@@ -1149,7 +1149,7 @@ fn find_input_filename(
         if let Some(name) = entry.file_name().to_str() {
             if name.starts_with("nsl_") && name.ends_with(&pattern) {
                 let found_path = entry.path().to_string_lossy().to_string();
-                test_print(&format!("   ... found: {}", name));
+                debug_print(&format!("   ... found: {}", name));
                 return Some(found_path);
             }
         }
