@@ -44,7 +44,7 @@ use crate::utils::*;
 struct Args {
     /// Target size for the no-set lists (4-18 or range like 5-7)
     /// 
-    /// If not provided, runs the default behavior (creates seeds + sizes 4-18)
+    /// If not provided, runs default behavior (creates seeds + sizes 4-18)
     /// - Single size: "5" builds size 5 from size 4 files
     /// - Range: "5-7" builds sizes 5, 6, and 7 sequentially
     /// - Size 4: Builds from seed lists (size 3)
@@ -54,26 +54,26 @@ struct Args {
 
     /// Restart from specific input file: <SIZE> <BATCH>
     /// 
-    /// SIZE refers to the INPUT size. Processes from this batch onwards.
+    /// SIZE refers to INPUT size. Processes from this batch onwards.
     /// 
     /// Examples:
-    ///   --restart 5 2   Load input size 5 batch 2, continue through size 18
-    ///   --restart 7 0   Load input size 7 batch 0, continue through size 18
+    ///   --restart 5 2   Load size 5 batch 2, continue through size 18
+    ///   --restart 7 0   Load size 7 batch 0, continue through size 18
     /// 
-    /// By default, reads baseline counts from count file (no_set_list_count_XX.txt).
+    /// By default, reads baseline from count file (no_set_list_count_XX.txt)
     /// Use --force to regenerate count file by scanning all files.
     #[arg(long, num_args = 2, value_names = ["SIZE", "BATCH"], conflicts_with_all = ["size", "count", "unitary"])]
     restart: Option<Vec<u32>>,
 
     /// Process a single input batch (unitary processing): <SIZE> <BATCH>
     /// 
-    /// SIZE refers to the INPUT size. Processes ONLY this specific batch.
-    /// This is the ONLY canonical way to overwrite/fix a defective output file.
+    /// SIZE refers to INPUT size. Processes ONLY this specific batch.
+    /// This is the ONLY canonical way to overwrite/fix defective files.
     /// Output files from this batch will be regenerated.
     /// 
     /// Examples:
-    ///   --unitary 5 2    Reprocess input size 5 batch 2 only (creates size 6 outputs)
-    ///   --unitary 7 0    Reprocess input size 7 batch 0 only (creates size 8 outputs)
+    ///   --unitary 5 2   Reprocess size 5 batch 2 only (creates size 6)
+    ///   --unitary 7 0   Reprocess size 7 batch 0 only (creates size 8)
     /// 
     /// Use --force to regenerate count file first (recalculates baseline).
     #[arg(long, num_args = 2, value_names = ["SIZE", "BATCH"], conflicts_with_all = ["size", "count", "restart"])]
@@ -81,42 +81,42 @@ struct Args {
 
     /// Force regeneration of count file when using --restart or --unitary
     /// 
-    /// By default, restart/unitary modes read the existing count file for baseline counts.
-    /// This flag forces a full file scan to regenerate the count file first.
+    /// By default, restart/unitary modes read existing count file.
+    /// This flag forces a full file scan to regenerate it first.
     #[arg(long)]
     force: bool,
 
     /// Count existing files for a specific size and create summary report
     /// 
     /// Examples:
-    ///   --count 6   Count all size 6 files and create no_set_list_count_06.txt
+    ///   --count 6   Count all size 6 files, create no_set_list_count_06.txt
     /// 
-    /// This scans all files, counts lists, and creates a summary report
+    /// Scans all files, counts lists, creates summary report
     /// without processing any new lists
     #[arg(long, conflicts_with_all = ["size", "restart", "unitary", "compact"])]
     count: Option<u8>,
 
     /// Compact small output files into larger batches: <SIZE>
     /// 
-    /// SIZE refers to the OUTPUT size to compact. Reads all files for this size,
-    /// consolidates them into 10M-entry batches, and replaces original files.
+    /// SIZE refers to OUTPUT size to compact. Reads all files for this size,
+    /// consolidates into 10M-entry batches, replaces original files.
     /// 
-    /// New filename format: nsl_compacted_{size:02}_batch_{batch:05}_from_{first_source_batch:05}.rkyv
+    /// New filename: nsl_compacted_{size:02}_batch_{batch:05}_from_{src:05}.rkyv
     /// 
     /// Examples:
     ///   --compact 8   Compact all size 8 files into 10M-entry batches
     ///   --compact 12  Compact all size 12 files into 10M-entry batches
     /// 
-    /// Use when later processing waves create many small files (ratio < 1.0).
+    /// Use when later processing creates many small files (ratio < 1.0).
     /// Original files are deleted after successful compaction.
     #[arg(long, conflicts_with_all = ["size", "restart", "unitary", "count", "check"])]
     compact: Option<u8>,
 
     /// Check repository integrity for a specific size
     /// 
-    /// SIZE refers to the OUTPUT size to check. Analyzes files and count data:
-    /// - Lists missing output batches (should be numbered continuously)
-    /// - Lists files mentioned in intermediary count files but missing from directory
+    /// SIZE refers to OUTPUT size to check. Analyzes files and count data:
+    /// - Lists missing output batches (should be continuous)
+    /// - Lists files in intermediary count files but missing from directory
     /// 
     /// Examples:
     ///   --check 8   Check size 8 files for missing batches and files
@@ -133,9 +133,9 @@ struct Args {
     /// Usage by mode:
     /// - count: Only uses -i (reads files to count)
     /// - check: Uses -o (repository to check)
-    /// - size/range: Uses -i for input, -o for output (if only one given, uses for both)
-    /// - unitary: Uses -i for input (writes to same dir unless -o specified)
-    /// - restart: Uses -i for input, -o for output (if only one given, uses for both)
+    /// - size/range: Uses -i for input, -o for output (if only one, both)
+    /// - unitary: Uses -i for input (writes to same dir unless -o given)
+    /// - restart: Uses -i for input, -o for output (if only one, both)
     /// - compact: Uses -i for input files to compact
     /// 
     /// Examples:
