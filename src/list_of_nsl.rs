@@ -618,8 +618,8 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
     use std::fs;
     use std::path::PathBuf;
     
-    debug_print(&format!("\nCounting files for size {:02}...", target_size));
-    debug_print(&format!("   Input directory: {}", base_path));
+    test_print(&format!("\nCounting files for size {:02}...", target_size));
+    test_print(&format!("   Input directory: {}", base_path));
     
     let start_time = std::time::Instant::now();
     
@@ -638,15 +638,15 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
     }
     
     if all_files.is_empty() {
-        debug_print(&format!("No files found for size {:02}", target_size));
+        test_print(&format!("   ... No files found for size {:02}", target_size));
         return Ok(());
     }
     
-    debug_print(&format!("   Found {} files to count", all_files.len()));
+    test_print(&format!("   ... Found {} files to count", all_files.len()));
     
     // Process files in batches
     let num_batches = (all_files.len() + COUNT_BATCH_SIZE - 1) / COUNT_BATCH_SIZE;
-    debug_print(&format!("   Processing in {} batches of up to {} files each", num_batches, COUNT_BATCH_SIZE));
+    test_print(&format!("   ... Processing in {} batches of up to {} files each", num_batches, COUNT_BATCH_SIZE));
     
     let mut intermediary_files = Vec::new();
     let mut batches_skipped = 0usize;
@@ -658,11 +658,11 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
         
         // Check if intermediary file exists and is up-to-date
         if is_intermediary_file_valid(&intermediary_filename, chunk)? {
-            debug_print(&format!("\n   Batch {}/{}: Skipping (intermediary file is up-to-date)", 
+            test_print(&format!("\n   ... Batch {}/{}: Skipping (intermediary file is up-to-date)", 
                 batch_idx + 1, num_batches));
             batches_skipped += 1;
         } else {
-            debug_print(&format!("\n   Batch {}/{}: Processing {} files...", 
+            test_print(&format!("\n   ... Batch {}/{}: Processing {} files...", 
                 batch_idx + 1, num_batches, chunk.len()));
             
             process_count_batch(chunk, &intermediary_filename, target_size)?;
@@ -673,17 +673,17 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
     }
     
     // Consolidate intermediary files into final report
-    debug_print(&format!("\n   Consolidating {} intermediary files...", intermediary_files.len()));
+    test_print(&format!("\n   ... Consolidating {} intermediary files...", intermediary_files.len()));
     
     consolidate_count_files(&intermediary_files, base_path, target_size)?;
     
     // Keep intermediary files for idempotency (don't delete them)
-    debug_print("   Intermediary files kept for future idempotent runs");
+    test_print("   ... Intermediary files kept for future idempotent runs");
     
     let elapsed = start_time.elapsed().as_secs_f64();
-    debug_print(&format!("\nCount completed in {:.2} seconds", elapsed));
-    debug_print(&format!("   Batches processed: {}", batches_processed));
-    debug_print(&format!("   Batches skipped (up-to-date): {}", batches_skipped));
+    test_print(&format!("\nCount completed in {:.2} seconds", elapsed));
+    test_print(&format!("   Batches processed: {}", batches_processed));
+    test_print(&format!("   Batches skipped (up-to-date): {}", batches_skipped));
     
     Ok(())
 }
@@ -746,7 +746,7 @@ fn process_count_batch(files: &[std::path::PathBuf], output_file: &str, _target_
                                 if let Some(vec_nlist) = read_from_file_serialized(path.to_str().unwrap()) {
                                     let count = vec_nlist.len() as u64;
                                     file_info.insert((source_batch, target_batch), (name.to_string(), count));
-                                    debug_print(&format!("      ... {:>10} lists in {}",
+                                    test_print(&format!("      ... {:>10} lists in {}",
                                         count.separated_string(), name));
                                 }
                             }
