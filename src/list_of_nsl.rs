@@ -757,10 +757,10 @@ fn process_count_batch(files: &[std::path::PathBuf], output_file: &str, _target_
         }
     }
     
-    // Write intermediary file (simple format: source_batch target_batch count filename)
+    // Write intermediary file (format: "   ... count lists in filename")
     let mut file = fs::File::create(output_file)?;
-    for ((source_batch, target_batch), (filename, count)) in file_info.iter() {
-        writeln!(file, "{} {} {} {}", source_batch, target_batch, count, filename)?;
+    for ((_source_batch, _target_batch), (filename, count)) in file_info.iter() {
+        writeln!(file, "   ... {} lists in {}", count, filename)?;
     }
     
     Ok(())
@@ -782,15 +782,31 @@ fn consolidate_count_files(intermediary_files: &[String], base_path: &str, targe
         
         for line in reader.lines() {
             let line = line?;
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 4 {
-                if let (Ok(src_batch), Ok(tgt_batch), Ok(count)) = (
-                    parts[0].parse::<u32>(),
-                    parts[1].parse::<u32>(),
-                    parts[2].parse::<u64>()
-                ) {
-                    let filename = parts[3].to_string();
-                    all_file_info.insert((src_batch, tgt_batch), (filename, count));
+            // Format: "   ... count lists in filename"
+            if line.trim().starts_with("...") {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                // parts = ["...", count, "lists", "in", filename]
+                if parts.len() >= 5 {
+                    if let Ok(count) = parts[1].parse::<u64>() {
+                        let filename = parts[4];
+                        // Parse source and target batch numbers from filename
+                        if let Some(to_pos) = filename.find("_to_") {
+                            let before_to = &filename[..to_pos];
+                            let after_to = &filename[to_pos + 4..];
+                            
+                            if let Some(src_batch_pos) = before_to.rfind("_batch_") {
+                                let src_batch_str = &before_to[src_batch_pos + 7..];
+                                if let Ok(src_batch) = src_batch_str.parse::<u32>() {
+                                    if let Some(tgt_batch_pos) = after_to.rfind("_batch_") {
+                                        let tgt_batch_str = &after_to[tgt_batch_pos + 7..after_to.len() - 5]; // -5 for ".rkyv"
+                                        if let Ok(tgt_batch) = tgt_batch_str.parse::<u32>() {
+                                            all_file_info.insert((src_batch, tgt_batch), (filename.to_string(), count));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -847,6 +863,185 @@ fn consolidate_count_files(intermediary_files: &[String], base_path: &str, targe
     debug_print(&format!("   Total files: {}", all_file_info.len()));
     debug_print(&format!("   Total lists: {}", cumulative.separated_string()));
     
+    Ok(())
+}
+
+/// Check repository integrity for a specific size
+/// - Lists missing output batches (should be continuous)
+/// - Lists files mentioned in intermediary files but missing from directory
+pub fn check_size_files(base_path: &str, target_size: u8) -> std::io::Result<()> {
+    use std::fs;
+    use std::path::PathBuf;
+    use std::collections::{BTreeSet, HashMap};
+    use std::io::{BufRead, BufReader};
+    
+    test_print(&format!("\nCHECK MODE: Analyzing repository for size {:02}...", target_size));
+    test_print(&format!("   Directory: {}", base_path));
+    
+    // Step 1: Scan directory and collect all output files
+    let entries = fs::read_dir(base_path)?;
+    let pattern = format!("_to_{:02}_batch_", target_size);
+    
+    let mut all_files: Vec<String> = Vec::new();
+    let mut batch_numbers: BTreeSet<u32> = BTreeSet::new();
+    
+    for entry in entries.flatten() {
+        if let Some(name) = entry.file_name().to_str() {
+            if name.starts_with("nsl_") && name.contains(&pattern) && name.ends_with(".rkyv") {
+                all_files.push(name.to_string());
+                
+                // Extract target batch number
+                if let Some(to_pos) = name.find("_to_") {
+                    let after_to = &name[to_pos + 4..];
+                    if let Some(tgt_batch_pos) = after_to.rfind("_batch_") {
+                        let tgt_batch_str = &after_to[tgt_batch_pos + 7..after_to.len() - 5]; // -5 for ".rkyv"
+                        if let Ok(batch_num) = tgt_batch_str.parse::<u32>() {
+                            batch_numbers.insert(batch_num);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    test_print(&format!("   Found {} output files", all_files.len()));
+    
+    // Step 2: Check for missing batches in sequence
+    if !batch_numbers.is_empty() {
+        let min_batch = *batch_numbers.iter().next().unwrap();
+        let max_batch = *batch_numbers.iter().last().unwrap();
+        let mut missing_batches = Vec::new();
+        
+        for batch in min_batch..=max_batch {
+            if !batch_numbers.contains(&batch) {
+                missing_batches.push(batch);
+            }
+        }
+        
+        test_print(&format!("   Batch range: {:05} to {:05}", min_batch, max_batch));
+        
+        if missing_batches.is_empty() {
+            test_print("   ✓ No missing batches in sequence");
+        } else {
+            test_print(&format!("   ✗ Found {} missing batches:", missing_batches.len()));
+            for batch in &missing_batches {
+                test_print(&format!("      - Batch {:05}", batch));
+            }
+        }
+    } else {
+        test_print("   No output files found");
+    }
+    
+    // Build a set of existing files for fast lookup
+    let existing_files: HashMap<String, bool> = all_files.iter()
+        .map(|f| (f.clone(), true))
+        .collect();
+    
+    // Step 2: Check consolidated count file for missing files
+    let consolidated_count_file = format!("{}/no_set_list_count_{:02}.txt", base_path, target_size);
+    let consolidated_path = std::path::Path::new(&consolidated_count_file);
+    
+    if consolidated_path.exists() {
+        test_print(&format!("\n   Checking consolidated count file: no_set_list_count_{:02}.txt", target_size));
+        
+        let file = fs::File::open(consolidated_path)?;
+        let reader = BufReader::new(file);
+        
+        let mut total_files_in_consolidated = 0usize;
+        let mut missing_from_consolidated = Vec::new();
+        
+        for line in reader.lines() {
+            let line = line?;
+            // Skip comment lines
+            if line.trim().starts_with('#') {
+                continue;
+            }
+            // Format: "source_batch target_batch | cumulative | count | filename"
+            let parts: Vec<&str> = line.split('|').collect();
+            if parts.len() >= 4 {
+                let filename = parts[3].trim();
+                if !filename.is_empty() {
+                    total_files_in_consolidated += 1;
+                    
+                    if !existing_files.contains_key(filename) {
+                        missing_from_consolidated.push(filename.to_string());
+                    }
+                }
+            }
+        }
+        
+        test_print(&format!("   Files listed in consolidated file: {}", total_files_in_consolidated));
+        
+        if missing_from_consolidated.is_empty() {
+            test_print("   ✓ All files in consolidated count file are present");
+        } else {
+            test_print(&format!("   ✗ Found {} files in consolidated file but missing from directory:", missing_from_consolidated.len()));
+            for filename in &missing_from_consolidated {
+                test_print(&format!("      - {}", filename));
+            }
+        }
+    } else {
+        test_print(&format!("\n   Consolidated count file not found: no_set_list_count_{:02}.txt", target_size));
+        test_print("   Run --count mode first to generate count file");
+    }
+    
+    // Step 3: Read intermediary count files and check for missing files
+    let count_pattern = format!("no_set_list_intermediate_count_{:02}_", target_size);
+    let entries = fs::read_dir(base_path)?;
+    
+    let mut intermediary_files: Vec<PathBuf> = Vec::new();
+    for entry in entries.flatten() {
+        if let Some(name) = entry.file_name().to_str() {
+            if name.starts_with(&count_pattern) && name.ends_with(".txt") {
+                intermediary_files.push(entry.path());
+            }
+        }
+    }
+    
+    if intermediary_files.is_empty() {
+        test_print("\n   No intermediary count files found");
+        test_print("   (Intermediary files are optional, used for idempotent batch processing)");
+    } else {
+        test_print(&format!("\n   Checking {} intermediary count files", intermediary_files.len()));
+        
+        // Read each intermediary file and check for missing files
+        let mut total_files_in_intermediary = 0usize;
+        let mut missing_files = Vec::new();
+        
+        for intermediary_file in &intermediary_files {
+            let file = fs::File::open(intermediary_file)?;
+            let reader = BufReader::new(file);
+            
+            for line in reader.lines() {
+                let line = line?;
+                // Format: "   ... count lists in filename"
+                if line.trim().starts_with("...") {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 5 {
+                        let filename = parts[4];
+                        total_files_in_intermediary += 1;
+                        
+                        if !existing_files.contains_key(filename) {
+                            missing_files.push(filename.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        
+        test_print(&format!("   Files listed in intermediary files: {}", total_files_in_intermediary));
+        
+        if missing_files.is_empty() {
+            test_print("   ✓ All files listed in intermediary files are present");
+        } else {
+            test_print(&format!("   ✗ Found {} files listed but missing from directory:", missing_files.len()));
+            for filename in &missing_files {
+                test_print(&format!("      - {}", filename));
+            }
+        }
+    }
+    
+    test_print("\nCheck completed");
     Ok(())
 }
 

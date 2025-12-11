@@ -5,6 +5,37 @@ All notable changes to the funny_set_exploration project are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2025-12-11
+
+### Added
+
+- **Check mode**: New `--check <SIZE>` command to verify repository integrity
+  - Scans directory for missing batches (checks continuous numbering)
+  - Validates consolidated count file against actual files
+  - Validates intermediary count files against actual files
+  - Three-tier verification: batch sequence → consolidated → intermediary files
+  - Example: `--check 8 -o .\07_to_08\`
+  - Provides clear ✓/✗ indicators for each validation step
+  - Helps identify missing or corrupted files before processing
+
+### Changed
+
+- **Refactored intermediary file format**: Human-readable one-line-per-file format
+  - Old format: `source_batch target_batch count filename` (whitespace-separated)
+  - New format: `"   ... count lists in filename"` (matches test_print output)
+  - Easier to read and verify manually
+  - Consistent with user-facing progress messages
+  - Example: `"   ... 10,000,003 lists in nsl_08_batch_00002_to_09_batch_00010.rkyv"`
+  - Both writing (process_count_batch) and reading (consolidate_count_files) updated
+
+### Fixed
+
+- **Intermediary filename bug**: Removed accidental prefix in count mode
+  - Issue: Intermediary filenames had `"   ... "` prepended to path
+  - Result: Invalid paths like `"   ... .\07_to_08\/no_set_list_intermediate_count_08_000.txt"`
+  - Solution: Removed formatting prefix from filename construction
+  - Impact: Count mode now properly creates and checks intermediary files
+
 ## [0.4.2] - 2025-12-11
 
 ### Changed

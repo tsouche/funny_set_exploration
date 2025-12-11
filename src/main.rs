@@ -1,15 +1,16 @@
 /// Manage the search for the grail of Set: combinations of 12 / 15 / 18 cards 
 /// with no sets
 ///
-/// Version 0.4.2 - Optimized restart + dual paths + robust count mode
+/// Version 0.4.3 - Enhanced count mode + integrity checking
 /// 
 /// CLI Usage:
 ///   funny.exe --size 5 -o T:\data\funny_set_exploration              # Build size 5 from size 4
 ///   funny.exe --size 5-7 -o T:\data\funny_set_exploration            # Build sizes 5, 6, and 7
 ///   funny.exe --restart 5 2 -i .\input -o .\output                   # Restart with separate paths
 ///   funny.exe --unitary 5 2 -o T:\data\funny_set_exploration         # Process only size 5 batch 2
-///   funny.exe --count 6 -o T:\data\funny_set_exploration        # Count size 6 files
-///   funny.exe                                                # Default mode (sizes 4-18)
+///   funny.exe --count 6 -o T:\data\funny_set_exploration             # Count size 6 files
+///   funny.exe --check 6 -o T:\data\funny_set_exploration             # Check size 6 integrity
+///   funny.exe                                                        # Default mode (sizes 4-18)
 ///
 /// Arguments:
 ///   --size, -s <SIZE>        Target size to build (4-18, or range like 5-7)
@@ -17,6 +18,7 @@
 ///   --restart <SIZE> <BATCH>   Restart from specific input batch through size 18
 ///   --unitary <SIZE> <BATCH>   Process only one specific input batch (unitary processing)
 ///   --count <SIZE>             Count existing files and create summary report
+///   --check <SIZE>             Check repository integrity (missing batches/files)
 ///   --force                    Force regeneration of count file (with restart/unitary)
 ///   --output-path, -o        Optional: Directory for output files
 ///                            Defaults to current directory
@@ -107,8 +109,22 @@ struct Args {
     /// 
     /// Use when later processing waves create many small files (ratio < 1.0).
     /// Original files are deleted after successful compaction.
-    #[arg(long, conflicts_with_all = ["size", "restart", "unitary", "count"])]
+    #[arg(long, conflicts_with_all = ["size", "restart", "unitary", "count", "check"])]
     compact: Option<u8>,
+
+    /// Check repository integrity for a specific size
+    /// 
+    /// SIZE refers to the OUTPUT size to check. Analyzes files and count data:
+    /// - Lists missing output batches (should be numbered continuously)
+    /// - Lists files mentioned in intermediary count files but missing from directory
+    /// 
+    /// Examples:
+    ///   --check 8   Check size 8 files for missing batches and files
+    ///   --check 12  Check size 12 repository integrity
+    /// 
+    /// Requires count files to exist (run --count first).
+    #[arg(long, conflicts_with_all = ["size", "restart", "unitary", "count", "compact"])]
+    check: Option<u8>,
 
     /// Input directory path (optional)
     /// 
@@ -116,6 +132,7 @@ struct Args {
     /// 
     /// Usage by mode:
     /// - count: Only uses -i (reads files to count)
+    /// - check: Uses -o (repository to check)
     /// - size/range: Uses -i for input, -o for output (if only one given, uses for both)
     /// - unitary: Uses -i for input (writes to same dir unless -o specified)
     /// - restart: Uses -i for input, -o for output (if only one given, uses for both)
@@ -134,6 +151,7 @@ struct Args {
     /// 
     /// Usage by mode:
     /// - count: Not used
+    /// - check: Uses for repository to check (default: current dir)
     /// - size/range: Uses for output (if omitted, uses -i or current dir)
     /// - unitary: Uses for output (if omitted, uses -i directory)
     /// - restart: Uses for output (if omitted, uses -i or current dir)
@@ -242,7 +260,7 @@ fn main() {
         None
     };
 
-    use crate::list_of_nsl::{ListOfNSL, count_size_files, compact_size_files};
+    use crate::list_of_nsl::{ListOfNSL, count_size_files, compact_size_files, check_size_files};
 
     banner("Funny Set Exploration)");
     
@@ -274,6 +292,36 @@ fn main() {
             }
             Err(e) => {
                 eprintln!("Error during compaction: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+    
+    // =====================================================================
+    // CHECK MODE: Check repository integrity for a specific size
+    // =====================================================================
+    if let Some(check_size) = args.check {
+        // Initialize log file for check mode
+        init_log_file();
+        
+        if check_size < 3 || check_size > 18 {
+            eprintln!("Error: Check size {} out of range (3-18)", check_size);
+            std::process::exit(1);
+        }
+        
+        test_print(&format!("CHECK MODE: Analyzing repository for size {}", check_size));
+        
+        // Check mode: uses output_path (default: current directory)
+        let check_dir = args.output_path.as_deref().unwrap_or(".");
+        test_print(&format!("Directory: {}\n", check_dir));
+        
+        match check_size_files(check_dir, check_size) {
+            Ok(()) => {
+                test_print("\nCheck completed successfully!");
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("Error during check: {}", e);
                 std::process::exit(1);
             }
         }

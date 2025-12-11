@@ -4,13 +4,15 @@ A Rust-based exhaustive search algorithm to find all combinations of 12, 15, and
 
 ## Project Status
 
-**Current Version:** 0.4.2 (December 2025)
+**Current Version:** 0.4.3 (December 2025)
 
 **Key Features:**
 
 - Restart capability with optimized filename-based batch discovery (Method 3)
 - Dual input/output path support for safer processing
 - Robust count mode with batched processing and idempotency
+- Repository integrity checking (missing batches/files detection)
+- Human-readable intermediary files with count details per file
 - 5-digit batch numbering for scalability
 - Continuous batch numbering across source files
 
@@ -79,6 +81,9 @@ cargo build --release
 # Count existing files
 ./target/release/funny_set_exploration --count 6 -o T:\data\funny_set_exploration
 
+# Check repository integrity
+./target/release/funny_set_exploration --check 6 -o T:\data\funny_set_exploration
+
 # Compact small files into larger batches
 ./target/release/funny_set_exploration --compact 8 -o T:\data\funny_set_exploration
 ```
@@ -107,6 +112,11 @@ Options:
       --count <SIZE>
           Count existing files for target size, create summary report
           Creates no_set_list_count_XX.txt without processing new lists
+
+      --check <SIZE>
+          Check repository integrity for target size
+          Validates batch sequence, consolidated count file, and intermediary files
+          Reports missing batches and files with ✓/✗ indicators
 
       --compact <SIZE>
           Compact small output files into larger 10M-entry batches
