@@ -642,6 +642,9 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
         return Ok(());
     }
     
+    // Sort files to ensure consistent batch composition across runs
+    all_files.sort();
+    
     test_print(&format!("   ... Found {} files to count", all_files.len()));
     
     // Process files in batches
@@ -658,12 +661,12 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
         
         // Check if intermediary file exists and is up-to-date
         if is_intermediary_file_valid(&intermediary_filename, chunk)? {
-            test_print(&format!("\n   ... Batch {}/{}: Skipping (intermediary file is up-to-date)", 
-                batch_idx + 1, num_batches));
+            test_print(&format!("\n   ... Batch {:03}/{}: Skipping (intermediary file is up-to-date)", 
+                batch_idx, num_batches));
             batches_skipped += 1;
         } else {
-            test_print(&format!("\n   ... Batch {}/{}: Processing {} files...", 
-                batch_idx + 1, num_batches, chunk.len()));
+            test_print(&format!("\n   ... Batch {:03}/{}: Processing {} files...", 
+                batch_idx, num_batches, chunk.len()));
             
             process_count_batch(chunk, &intermediary_filename, target_size)?;
             batches_processed += 1;
@@ -760,7 +763,7 @@ fn process_count_batch(files: &[std::path::PathBuf], output_file: &str, _target_
     // Write intermediary file (format: "   ... count lists in filename")
     let mut file = fs::File::create(output_file)?;
     for ((_source_batch, _target_batch), (filename, count)) in file_info.iter() {
-        writeln!(file, "   ... {} lists in {}", count, filename)?;
+        writeln!(file, "   ... {:>8} lists in {}", count, filename)?;
     }
     
     Ok(())
