@@ -378,6 +378,83 @@ impl ListOfNSL {
         file_new_total
     }
     
+    // ========================================================================
+    // Helper methods for common processing patterns
+    // ========================================================================
+    
+    /// Initialize processing state for a given size and starting batch
+    fn init_processing_state(&mut self, current_size: u8, start_batch: u32) {
+        self.computation_time = 0.0;
+        self.file_io_time = 0.0;
+        self.conversion_time = 0.0;
+        self.current_size = current_size;
+        self.current.clear();
+        self.current_file_batch = start_batch;
+        self.current_file_list_count = 0;
+        self.current_total_list_count = 0;
+        self.new.clear();
+        self.new_file_list_count = 0;
+    }
+    
+    /// Initialize output batch number (for restart/unitary modes)
+    fn init_output_batch(&mut self, reference_batch: u32) {
+        let next_batch = get_next_output_batch_from_files(
+            &self.output_path,
+            self.current_size + 1,
+            reference_batch
+        );
+        self.new_total_list_count = 0;
+        self.new_output_batch = next_batch;
+    }
+    
+    /// Print timing breakdown report
+    fn print_timing_report(&self, start_time: std::time::Instant) {
+        let elapsed = start_time.elapsed();
+        let elapsed_secs = elapsed.as_secs_f64();
+        let overhead = elapsed_secs - self.computation_time - self.file_io_time - self.conversion_time;
+        
+        test_print(&format!("   ... timing breakdown: computation {:.2}s \
+            ({:.1}%), file I/O {:.2}s ({:.1}%), conversion {:.2}s ({:.1}%), \
+            overhead {:.2}s ({:.1}%)",
+            self.computation_time, (self.computation_time / elapsed_secs * 100.0),
+            self.file_io_time, (self.file_io_time / elapsed_secs * 100.0),
+            self.conversion_time, (self.conversion_time / elapsed_secs * 100.0),
+            overhead, (overhead / elapsed_secs * 100.0)));
+    }
+    
+    /// Process batches in a loop with consistent logging
+    /// Returns number of batches processed
+    fn process_batch_loop(&mut self, max: &u64, stop_after_one: bool) -> u32 {
+        let mut batches_processed = 0;
+        
+        loop {
+            test_print(&format!("   ... loading batch {}", self.current_file_batch));
+            let loaded = self.refill_current_from_file();
+            
+            if loaded {
+                test_print(&format!("   ... loaded {:>10} lists from batch {}", 
+                    self.current.len().separated_string(), self.current_file_batch));
+                self.process_one_file_of_current_size_n(max);
+                self.current_file_batch += 1;
+                batches_processed += 1;
+                
+                if stop_after_one {
+                    break;
+                }
+            } else {
+                debug_print(&format!("process_batch_loop: no more files for size {:02}", 
+                    self.current_size));
+                break;
+            }
+        }
+        
+        batches_processed
+    }
+    
+    // ========================================================================
+    // Main processing methods (refactored to use helpers)
+    // ========================================================================
+    
     /// Process all files for a given size
     pub fn process_all_files_of_current_size_n(&mut self, current_size: u8, max: &u64) -> u64 {
         if current_size < 3 {
@@ -388,59 +465,23 @@ impl ListOfNSL {
         debug_print(&format!("process_all_files_of_current_size_n: start processing \
             no-set-{:02}", current_size));
         
-        // Start timing
         let start_time = std::time::Instant::now();
         
-        // Reset timing counters
-        self.computation_time = 0.0;
-        self.file_io_time = 0.0;
-        self.conversion_time = 0.0;
-        
-        // Initialize for this size
-        self.current_size = current_size;
-        self.current.clear();
-        self.current_file_batch = 0;
-        self.current_file_list_count = 0;
-        self.current_total_list_count = 0;
-        self.new.clear();
+        // Initialize from batch 0, starting output from batch 0
+        self.init_processing_state(current_size, 0);
         self.new_output_batch = 0;
-        self.new_file_list_count = 0;
         self.new_total_list_count = 0;
         
-        // Process all input files for this size
-        loop {
-            debug_print(&format!("process_all_files_of_current_size_n: loading batch {} \
-                for size {:02}", self.current_file_batch, self.current_size));
-            
-            let loaded = self.refill_current_from_file();
-            if loaded {
-                debug_print(&format!("process_all_files_of_current_size_n: loaded {} n-lists", 
-                    self.current.len()));
-                self.process_one_file_of_current_size_n(max);
-                self.current_file_batch += 1;
-            } else {
-                debug_print(&format!("process_all_files_of_current_size_n: no more files \
-                    for size {:02}", self.current_size));
-                break;
-            }
-        }
-        
-        let elapsed = start_time.elapsed();
-        let elapsed_secs = elapsed.as_secs_f64();
-        let overhead = elapsed_secs - self.computation_time - self.file_io_time - self.conversion_time;
+        // Process all batches
+        self.process_batch_loop(max, false);
         
         debug_print(&format!("process_all_files_of_current_size_n: Finished \
             processing size {:02}", self.current_size));
         
-        // Report total with breakdown
+        // Report results
+        let elapsed_secs = start_time.elapsed().as_secs_f64();
         created_a_total_of(self.new_total_list_count, self.current_size + 1, elapsed_secs);
-        debug_print(&format!("   ... timing breakdown: computation {:.2}s \
-            ({:.1}%), file I/O {:.2}s ({:.1}%), conversion {:.2}s ({:.1}%), \
-            overhead {:.2}s ({:.1}%)",
-            self.computation_time, (self.computation_time / elapsed_secs * 100.0),
-            self.file_io_time, (self.file_io_time / elapsed_secs * 100.0),
-            self.conversion_time, (self.conversion_time / elapsed_secs * 100.0),
-            overhead, (overhead / elapsed_secs * 100.0)));
+        self.print_timing_report(start_time);
         
         self.new_total_list_count
     }
@@ -456,73 +497,27 @@ impl ListOfNSL {
         debug_print(&format!("process_from_batch: start processing no-set-{:02} from batch {}", 
             current_size, start_batch));
         
-        // Start timing
         let start_time = std::time::Instant::now();
         
-        // Reset timing counters
-        self.computation_time = 0.0;
-        self.file_io_time = 0.0;
-        self.conversion_time = 0.0;
+        // Initialize from specific batch
+        self.init_processing_state(current_size, start_batch);
+        self.init_output_batch(start_batch);  // Scan for next available output batch
         
-        // Initialize for this size
-        self.current_size = current_size;
-        self.current.clear();
-        self.current_file_batch = start_batch;  // Start from specified batch
-        self.current_file_list_count = 0;
-        self.current_total_list_count = 0;
-        self.new.clear();
-        self.new_file_list_count = 0;
-        
-        // Get next available batch number by scanning existing output filenames
-        let next_batch = get_next_output_batch_from_files(
-            &self.output_path,
-            self.current_size + 1,
-            start_batch
-        );
-        self.new_total_list_count = 0;  // No baseline counting needed
-        self.new_output_batch = next_batch;  // Continue numbering from where we left off
-        
-        // Process files starting from start_batch
-        loop {
-            test_print(&format!("   ... loading batch {}", 
-                self.current_file_batch));
-            let loaded = self.refill_current_from_file();
-            if loaded {
-                test_print(&format!("   ... loaded {:>10} lists from batch {}", 
-                    self.current.len().separated_string(), self.current_file_batch));
-                debug_print(&format!("process_from_batch: loaded {} n-lists", 
-                    self.current.len()));
-                self.process_one_file_of_current_size_n(max);
-                debug_print(&format!("   ... processing complete for batch {}", self.current_file_batch));
-                self.current_file_batch += 1;
-            } else {
-                debug_print(&format!("process_from_batch: no more files for size {:02}", 
-                    self.current_size));
-                break;
-            }
-        }
-        
-        let elapsed = start_time.elapsed();
-        let elapsed_secs = elapsed.as_secs_f64();
-        let overhead = elapsed_secs - self.computation_time - self.file_io_time - self.conversion_time;
+        // Process all batches from start_batch onwards
+        self.process_batch_loop(max, false);
         
         debug_print(&format!("process_from_batch: Finished processing size {:02} from batch {}", 
             self.current_size, start_batch));
         
-        // Report total with breakdown
+        // Report results
+        let elapsed_secs = start_time.elapsed().as_secs_f64();
         created_a_total_of(self.new_total_list_count, self.current_size + 1, elapsed_secs);
-        test_print(&format!("   ... timing breakdown: computation {:.2}s \
-            ({:.1}%), file I/O {:.2}s ({:.1}%), conversion {:.2}s ({:.1}%), \
-            overhead {:.2}s ({:.1}%)",
-            self.computation_time, (self.computation_time / elapsed_secs * 100.0),
-            self.file_io_time, (self.file_io_time / elapsed_secs * 100.0),
-            self.conversion_time, (self.conversion_time / elapsed_secs * 100.0),
-            overhead, (overhead / elapsed_secs * 100.0)));
+        self.print_timing_report(start_time);
         
         self.new_total_list_count
     }
     
-    /// Process a single input batch (unit processing)
+    /// Process a single input batch (unitary processing)
     /// Processes one specific input file and generates its output files
     pub fn process_single_batch(&mut self, input_size: u8, input_batch: u32, max: &u64) -> u64 {
         if input_size < 3 {
@@ -533,65 +528,32 @@ impl ListOfNSL {
         debug_print(&format!("process_single_batch: processing input size {:02} batch {:05}", 
             input_size, input_batch));
         
-        // Start timing
         let start_time = std::time::Instant::now();
         
-        // Reset timing counters
-        self.computation_time = 0.0;
-        self.file_io_time = 0.0;
-        self.conversion_time = 0.0;
+        // Initialize for single batch
+        self.init_processing_state(input_size, input_batch);
+        self.init_output_batch(input_batch);  // Scan for next available output batch
         
-        // Initialize for this size
-        self.current_size = input_size;
-        self.current.clear();
-        self.current_file_batch = input_batch;
-        self.current_file_list_count = 0;
-        self.current_total_list_count = 0;
-        self.new.clear();
-        self.new_file_list_count = 0;
+        test_print(&format!("   ... will create output starting from batch {:05}", self.new_output_batch));
         
-        // Get next available batch number by scanning existing output filenames
-        let next_batch = get_next_output_batch_from_files(
-            &self.output_path,
-            self.current_size + 1,
-            input_batch
-        );
-        self.new_total_list_count = 0;  // No baseline counting needed
-        self.new_output_batch = next_batch;  // Start from next available batch
+        // Process only this one batch
+        let batches_processed = self.process_batch_loop(max, true);
         
-        test_print(&format!("   ... will create output starting from batch {:05}", next_batch));
-        
-        // Load the single input batch
-        let loaded = self.refill_current_from_file();
-        if !loaded {
+        if batches_processed == 0 {
             test_print(&format!("   ... ERROR: Could not load input file for size {:02} batch {:05}",
                 input_size, input_batch));
             return 0;
         }
         
-        debug_print(&format!("process_single_batch: loaded {} n-lists", self.current.len()));
-        
-        // Process this single batch
-        let created_count = self.process_one_file_of_current_size_n(max);
-        
-        let elapsed = start_time.elapsed();
-        let elapsed_secs = elapsed.as_secs_f64();
-        let overhead = elapsed_secs - self.computation_time - self.file_io_time - self.conversion_time;
-        
         debug_print(&format!("process_single_batch: Finished processing size {:02} batch {:05}", 
             input_size, input_batch));
         
-        // Report total with breakdown
+        // Report results (slightly different format for unitary)
         test_print(&format!("   ... created {:>17} new no-set-{:02} lists from this batch",
-            created_count.separated_string(), self.current_size + 1));
-        test_print(&format!("   ... timing: computation {:.2}s ({:.1}%), I/O {:.2}s ({:.1}%), \
-            conversion {:.2}s ({:.1}%), overhead {:.2}s ({:.1}%)",
-            self.computation_time, (self.computation_time / elapsed_secs * 100.0),
-            self.file_io_time, (self.file_io_time / elapsed_secs * 100.0),
-            self.conversion_time, (self.conversion_time / elapsed_secs * 100.0),
-            overhead, (overhead / elapsed_secs * 100.0)));
+            self.new_total_list_count.separated_string(), self.current_size + 1));
+        self.print_timing_report(start_time);
         
-        created_count
+        self.new_total_list_count
     }
 }
 
@@ -923,11 +885,11 @@ pub fn check_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
         test_print(&format!("   Batch range: {:05} to {:05}", min_batch, max_batch));
         
         if missing_batches.is_empty() {
-            test_print("   ✓ No missing batches in sequence");
+            test_print("   [OK] No missing batches in sequence");
         } else {
-            test_print(&format!("   ✗ Found {} missing batches:", missing_batches.len()));
+            test_print(&format!("   [!!] Found {} missing batches:", missing_batches.len()));
             for batch in &missing_batches {
-                test_print(&format!("      - Batch {:05}", batch));
+                test_print(&format!("        - Batch {:05}", batch));
             }
         }
     } else {
@@ -975,11 +937,11 @@ pub fn check_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
         test_print(&format!("   Files listed in consolidated file: {}", total_files_in_consolidated));
         
         if missing_from_consolidated.is_empty() {
-            test_print("   ✓ All files in consolidated count file are present");
+            test_print("   [OK] All files in consolidated count file are present");
         } else {
-            test_print(&format!("   ✗ Found {} files in consolidated file but missing from directory:", missing_from_consolidated.len()));
+            test_print(&format!("   [!!] Found {} files in consolidated file but missing from directory:", missing_from_consolidated.len()));
             for filename in &missing_from_consolidated {
-                test_print(&format!("      - {}", filename));
+                test_print(&format!("        - {}", filename));
             }
         }
     } else {
@@ -1034,11 +996,11 @@ pub fn check_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
         test_print(&format!("   Files listed in intermediary files: {}", total_files_in_intermediary));
         
         if missing_files.is_empty() {
-            test_print("   ✓ All files listed in intermediary files are present");
+            test_print("   [OK] All files listed in intermediary files are present");
         } else {
-            test_print(&format!("   ✗ Found {} files listed but missing from directory:", missing_files.len()));
+            test_print(&format!("   [!!] Found {} files listed but missing from directory:", missing_files.len()));
             for filename in &missing_files {
-                test_print(&format!("      - {}", filename));
+                test_print(&format!("        - {}", filename));
             }
         }
     }

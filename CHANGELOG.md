@@ -5,6 +5,50 @@ All notable changes to the funny_set_exploration project are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.4] - 2025-12-13
+
+### Fixed
+
+- **Size mode visibility**: Added consistent logging for file loading progress
+  - Size mode now displays "loading batch X" and "loaded Y lists" messages
+  - Matches behavior of restart and unitary modes for better user feedback
+  - Previously used debug_print (hidden), now uses test_print (visible)
+
+- **Unicode encoding issues**: Replaced Unicode symbols with ASCII-safe alternatives
+  - Changed ✓ to `[OK]` and ✗ to `[!!]` in check mode output
+  - Fixes display corruption in Windows PowerShell (was showing "Γ£ô")
+  - All status indicators now display correctly across all terminal types
+
+- **Path resolution bug**: Fixed --size mode not respecting -i/--input-path
+  - Size mode was reading from output directory instead of input directory
+  - Now correctly uses input_path for reading and output_path for writing
+  - Previously only --restart and --unitary modes handled dual paths correctly
+
+### Changed
+
+- **Code refactoring (Phases 1-3)**: Major reduction in code duplication
+  - **Phase 1**: Extracted common helper functions (validate_size, resolve_paths, handle_force_recount)
+  - **Phase 2**: Created unified ProcessingConfig structure and ProcessingMode enum
+  - **Phase 3**: Restructured main() to use centralized execute_mode() dispatcher
+  - Reduced main.rs from 637 lines to 579 lines (9% reduction)
+  - All modes now use consistent path resolution and validation logic
+  
+- **list_of_nsl.rs refactoring**: Eliminated duplication in processing methods
+  - Added helper methods: init_processing_state(), init_output_batch(), print_timing_report(), process_batch_loop()
+  - Refactored process_all_files_of_current_size_n() from 67 to 28 lines (58% reduction)
+  - Refactored process_from_batch() from 73 to 25 lines (66% reduction)
+  - Refactored process_single_batch() from 69 to 32 lines (54% reduction)
+  - All three processing modes now share common initialization and reporting logic
+  - Consistent test_print() usage across all modes for file loading messages
+
+### Improved
+
+- **Code maintainability**: Single source of truth for common operations
+  - Path resolution logic unified across all 7 modes
+  - Size validation centralized with mode-specific ranges
+  - Timing reports use identical formatting across all modes
+  - Easier to add new modes or modify existing behavior
+
 ## [0.4.3] - 2025-12-11
 
 ### Added
@@ -15,7 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Validates intermediary count files against actual files
   - Three-tier verification: batch sequence → consolidated → intermediary files
   - Example: `--check 8 -o .\07_to_08\`
-  - Provides clear ✓/✗ indicators for each validation step
+  - Provides clear [OK]/[!!] indicators for each validation step
   - Helps identify missing or corrupted files before processing
 
 ### Changed

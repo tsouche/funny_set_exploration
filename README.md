@@ -4,7 +4,7 @@ A Rust-based exhaustive search algorithm to find all combinations of 12, 15, and
 
 ## Project Status
 
-**Current Version:** 0.4.3 (December 2025)
+**Current Version:** 0.4.4 (December 2025)
 
 **Key Features:**
 
@@ -116,7 +116,7 @@ Options:
       --check <SIZE>
           Check repository integrity for target size
           Validates batch sequence, consolidated count file, and intermediary files
-          Reports missing batches and files with ✓/✗ indicators
+          Reports missing batches and files with [OK]/[!!] indicators
 
       --compact <SIZE>
           Compact small output files into larger 10M-entry batches

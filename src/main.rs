@@ -1,7 +1,8 @@
 /// Manage the search for the grail of Set: combinations of 12 / 15 / 18 cards 
 /// with no sets
 ///
-/// Version 0.4.3 - Enhanced count mode + integrity checking
+/// Version 0.4.4 - Code refactoring + improved consistency
+/// Refactored: Phases 1-3 complete - unified configuration and mode dispatch
 /// 
 /// CLI Usage:
 ///   funny.exe --size 5 -o T:\data\funny_set_exploration              # Build size 5 from size 4
@@ -197,10 +198,336 @@ fn parse_size_range(size_str: &str) -> Result<(u8, u8), String> {
     }
 }
 
-fn main() {
-    // Parse command-line arguments
-    let args = Args::parse();
+/// Unified configuration for all processing modes
+#[derive(Debug)]
+struct ProcessingConfig {
+    mode: ProcessingMode,
+    input_dir: String,
+    output_dir: String,
+    max_lists_per_file: u64,
+    force_recount: bool,
+}
 
+/// Processing mode enumeration
+#[derive(Debug)]
+enum ProcessingMode {
+    Count { size: u8 },
+    Check { size: u8 },
+    Compact { size: u8 },
+    Restart { size: u8, batch: u32 },
+    Unitary { size: u8, batch: u32 },
+    SizeRange { start: u8, end: u8 },
+    Default,
+}
+
+impl ProcessingMode {
+    /// Check if this mode requires log file initialization
+    fn requires_logging(&self) -> bool {
+        matches!(self, 
+            ProcessingMode::Count { .. } | 
+            ProcessingMode::Check { .. } | 
+            ProcessingMode::Compact { .. })
+    }
+}
+
+/// Validate size parameter for different modes
+fn validate_size(size: u8, mode_name: &str, min: u8, max: u8) -> Result<(), String> {
+    if size < min || size > max {
+        Err(format!("Error: {} size {} out of range ({}-{})", mode_name, size, min, max))
+    } else {
+        Ok(())
+    }
+}
+
+/// Resolve paths for modes that use both input and output with fallback logic
+fn resolve_dual_path(input_arg: Option<&str>, output_arg: Option<&str>) -> (String, String) {
+    match (input_arg, output_arg) {
+        (Some(i), Some(o)) => (i.to_string(), o.to_string()),
+        (Some(i), None) => (i.to_string(), i.to_string()),
+        (None, Some(o)) => (o.to_string(), o.to_string()),
+        (None, None) => (".".to_string(), ".".to_string()),
+    }
+}
+
+/// Resolve input/output paths based on mode requirements
+fn resolve_paths(
+    mode: &ProcessingMode,
+    input_arg: Option<&str>,
+    output_arg: Option<&str>
+) -> (String, String) {
+    match mode {
+        ProcessingMode::Count { .. } => {
+            // Count only uses input
+            (input_arg.unwrap_or(".").to_string(), String::new())
+        },
+        ProcessingMode::Check { .. } => {
+            // Check only uses output
+            (String::new(), output_arg.unwrap_or(".").to_string())
+        },
+        ProcessingMode::Restart { .. } => {
+            // Restart uses both, with fallback logic
+            resolve_dual_path(input_arg, output_arg)
+        },
+        ProcessingMode::Unitary { .. } | ProcessingMode::SizeRange { .. } | ProcessingMode::Compact { .. } => {
+            // These modes default output to input if not specified
+            let input = input_arg.unwrap_or(".").to_string();
+            let output = output_arg.unwrap_or(&input).to_string();
+            (input, output)
+        },
+        ProcessingMode::Default => {
+            // Default mode has hardcoded fallback
+            let path = output_arg.unwrap_or(r"T:\data\funny_set_exploration").to_string();
+            (path.clone(), path)
+        }
+    }
+}
+
+/// Handle force recount if enabled
+fn handle_force_recount(
+    enabled: bool,
+    directory: &str,
+    target_size: u8
+) -> Result<(), String> {
+    if !enabled {
+        return Ok(());
+    }
+    
+    use crate::list_of_nsl::count_size_files;
+    
+    test_print(&format!("\nFORCE MODE: Regenerating count file for size {}...", target_size));
+    count_size_files(directory, target_size)
+        .map_err(|e| format!("Error regenerating count file: {}", e))?;
+    test_print("Count file regenerated successfully\n");
+    Ok(())
+}
+
+/// Print directories with consistent formatting
+fn print_directories(input: &str, output: &str) {
+    if !input.is_empty() {
+        test_print(&format!("Input directory: {}", input));
+    }
+    if !output.is_empty() {
+        test_print(&format!("Output directory: {}", output));
+    }
+}
+
+/// Build unified configuration from parsed arguments
+fn build_config(args: &Args, max_per_file: u64) -> Result<ProcessingConfig, String> {
+    // Determine processing mode from arguments
+    let mode = if let Some(compact_size) = args.compact {
+        validate_size(compact_size, "Compact", 3, 18)?;
+        ProcessingMode::Compact { size: compact_size }
+    } else if let Some(check_size) = args.check {
+        validate_size(check_size, "Check", 3, 18)?;
+        ProcessingMode::Check { size: check_size }
+    } else if let Some(count_size) = args.count {
+        validate_size(count_size, "Count", 3, 18)?;
+        ProcessingMode::Count { size: count_size }
+    } else if let Some(ref restart_vec) = args.restart {
+        if restart_vec.len() != 2 {
+            return Err("--restart requires exactly 2 arguments: SIZE BATCH".to_string());
+        }
+        let size = restart_vec[0] as u8;
+        let batch = restart_vec[1];
+        validate_size(size, "Restart", 4, 18)?;
+        ProcessingMode::Restart { size, batch }
+    } else if let Some(ref unitary_vec) = args.unitary {
+        if unitary_vec.len() != 2 {
+            return Err("--unitary requires exactly 2 arguments: SIZE BATCH".to_string());
+        }
+        let size = unitary_vec[0] as u8;
+        let batch = unitary_vec[1];
+        validate_size(size, "Unitary", 3, 17)?;
+        ProcessingMode::Unitary { size, batch }
+    } else if let Some(ref size_str) = args.size {
+        let (start, end) = parse_size_range(size_str)?;
+        ProcessingMode::SizeRange { start, end }
+    } else {
+        ProcessingMode::Default
+    };
+
+    // Resolve paths based on mode
+    let (input_dir, output_dir) = resolve_paths(&mode, args.input_path.as_deref(), args.output_path.as_deref());
+
+    Ok(ProcessingConfig {
+        mode,
+        input_dir,
+        output_dir,
+        max_lists_per_file: max_per_file,
+        force_recount: args.force,
+    })
+}
+
+/// Execute the appropriate mode based on configuration
+fn execute_mode(config: &ProcessingConfig) -> Result<String, String> {
+    use crate::list_of_nsl::{count_size_files, compact_size_files, check_size_files};
+    
+    match &config.mode {
+        ProcessingMode::Count { size } => {
+            // Banner is printed by count_size_files function
+            count_size_files(&config.input_dir, *size)
+                .map_err(|e| format!("Error during count: {}", e))?;
+            Ok("Count completed successfully".to_string())
+        },
+        
+        ProcessingMode::Check { size } => {
+            // Banner is printed by check_size_files function
+            check_size_files(&config.output_dir, *size)
+                .map_err(|e| format!("Error during check: {}", e))?;
+            Ok("Check completed successfully".to_string())
+        },
+        
+        ProcessingMode::Compact { size } => {
+            // Banner is printed by compact_size_files function
+            compact_size_files(&config.input_dir, &config.output_dir, *size, config.max_lists_per_file)
+                .map_err(|e| format!("Error during compaction: {}", e))?;
+            Ok("Compaction completed successfully".to_string())
+        },
+        
+        ProcessingMode::Restart { size, batch } => {
+            execute_restart_mode(config, *size, *batch)
+        },
+        
+        ProcessingMode::Unitary { size, batch } => {
+            execute_unitary_mode(config, *size, *batch)
+        },
+        
+        ProcessingMode::SizeRange { start, end } => {
+            execute_size_range_mode(config, *start, *end)
+        },
+        
+        ProcessingMode::Default => {
+            execute_default_mode(config)
+        },
+    }
+}
+
+/// Execute restart mode: resume from specific batch through size 18
+fn execute_restart_mode(config: &ProcessingConfig, restart_size: u8, restart_batch: u32) -> Result<String, String> {
+    use crate::list_of_nsl::ListOfNSL;
+    
+    test_print(&format!("RESTART MODE: Resuming from size {} batch {}", restart_size, restart_batch));
+    test_print("Will process through size 18");
+    test_print(&format!("Batch size: {} entries/file (~1GB, compact)", config.max_lists_per_file.separated_string()));
+    print_directories(&config.input_dir, &config.output_dir);
+    
+    handle_force_recount(config.force_recount, &config.output_dir, restart_size + 1)?;
+    test_print("\n======================\n");
+
+    let mut no_set_lists = ListOfNSL::with_paths(&config.input_dir, &config.output_dir);
+
+    for target_size in (restart_size + 1)..=18 {
+        let source_size = target_size - 1;
+        
+        if source_size == restart_size {
+            test_print(&format!("Start processing files to create no-set-lists of size {} (from input batch {}):\n", 
+                target_size, restart_batch));
+            no_set_lists.process_from_batch(source_size, restart_batch, &config.max_lists_per_file);
+        } else {
+            test_print(&format!("Start processing files to create no-set-lists of size {}:\n", target_size));
+            no_set_lists.process_all_files_of_current_size_n(source_size, &config.max_lists_per_file);
+        }
+        
+        test_print(&format!("\nCompleted size {}!\n", target_size));
+    }
+    
+    Ok(format!("Restart processing completed through size 18"))
+}
+
+/// Execute unitary mode: process a single input batch
+fn execute_unitary_mode(config: &ProcessingConfig, unitary_size: u8, unitary_batch: u32) -> Result<String, String> {
+    use crate::list_of_nsl::ListOfNSL;
+    
+    test_print(&format!("UNITARY MODE: Processing input size {} batch {}", unitary_size, unitary_batch));
+    test_print(&format!("Output: size {} files", unitary_size + 1));
+    test_print(&format!("Batch size: {} entries/file (~1GB, compact)", config.max_lists_per_file.separated_string()));
+    print_directories(&config.input_dir, &config.output_dir);
+    
+    handle_force_recount(config.force_recount, &config.output_dir, unitary_size + 1)?;
+    test_print("\n======================\n");
+
+    let mut no_set_lists = ListOfNSL::with_paths(&config.input_dir, &config.output_dir);
+    
+    test_print(&format!("Processing input size {} batch {}:", unitary_size, unitary_batch));
+    no_set_lists.process_single_batch(unitary_size, unitary_batch, &config.max_lists_per_file);
+    
+    Ok(format!("Unitary processing completed for size {} batch {}", unitary_size, unitary_batch))
+}
+
+/// Execute size range mode: process one or more consecutive sizes
+fn execute_size_range_mode(config: &ProcessingConfig, start_size: u8, end_size: u8) -> Result<String, String> {
+    use crate::list_of_nsl::ListOfNSL;
+    
+    if start_size == end_size {
+        test_print(&format!("Target size = {} cards", start_size));
+    } else {
+        test_print(&format!("Size range = {} to {} cards", start_size, end_size));
+    }
+    test_print(&format!("Batch size: {} entries/file (~1GB, compact)", config.max_lists_per_file.separated_string()));
+    print_directories(&config.input_dir, &config.output_dir);
+    test_print("\n======================\n");
+
+    let mut no_set_lists = ListOfNSL::with_paths(&config.input_dir, &config.output_dir);
+
+    // Handle size 4: need to create seed lists first
+    if start_size == 4 {
+        test_print("Creating seed lists (size 3)...");
+        no_set_lists.create_seed_lists();
+        test_print("Seed lists created successfully.\n");
+    }
+
+    // Process each size in the range
+    for target_size in start_size..=end_size {
+        let source_size = target_size - 1;
+        test_print(&format!("Start processing files to create no-set-lists of size {}:", target_size));
+        
+        no_set_lists.process_all_files_of_current_size_n(source_size, &config.max_lists_per_file);
+        
+        test_print(&format!("\nCompleted size {}! Generated files: no-set-list_{:02}_batch_*.rkyv\n", 
+            target_size, target_size));
+    }
+    
+    Ok(format!("Size range processing completed (sizes {} to {})", start_size, end_size))
+}
+
+/// Execute default mode: process the whole pipeline (seeds + sizes 4 to 18)
+fn execute_default_mode(config: &ProcessingConfig) -> Result<String, String> {
+    use crate::list_of_nsl::ListOfNSL;
+    
+    test_print("   - will create          58.896 no-set-lists with  3 cards");
+    test_print("   - will create       1.004.589 no-set-lists with  4 cards");
+    test_print("   - will create      13.394.538 no-set-lists with  5 cards");
+    test_print("   - will create     141.370.218 no-set-lists with  6 cards");
+    test_print("   - will create   1.180.345.041 no-set-lists with  7 cards");
+    test_print("   - will create   7.920.450.378 no-set-lists with  8 cards");
+    test_print("   - will create  43.126.538.805 no-set-lists with  9 cards");
+    test_print("   - will create  __.___.___.___ no-set-lists with 10 cards");
+    test_print("   - will create  __.___.___.___ no-set-lists with 11 cards");
+    test_print("   - will create  __.___.___.___ no-set-lists with 12 cards");
+    test_print("   - will create  __.___.___.___ no-set-lists with 13 cards");
+    test_print("   - will create  __.___.___.___ no-set-lists with 14 cards");
+    test_print("   - will create  __.___.___.___ no-set-lists with 15 cards");
+    test_print("   - will create  __.___.___.___ no-set-lists with 16 cards");
+    test_print("   - will create  __.___.___.___ no-set-lists with 17 cards");
+    test_print("   - will create  __.___.___.___ no-set-lists with 18 cards");
+    test_print("\n======================\n");
+
+    let mut no_set_lists = ListOfNSL::with_path(&config.input_dir);
+
+    // Create all seed lists
+    test_print("Creating seed lists...");
+    no_set_lists.create_seed_lists();
+
+    // Expand from seed_lists to size 4, 5, 6...
+    for size in 3..17 {
+        test_print(&format!("\nStart processing files to create no-set-lists of size {}:", size + 1));
+        no_set_lists.process_all_files_of_current_size_n(size, &config.max_lists_per_file);
+    }
+    
+    Ok("Default pipeline completed (sizes 3-18)".to_string())
+}
+
+fn main() {
     /// Max number of n-list saved per file for v0.4.0
     /// - Each NoSetList: 792 bytes during compute (stack)
     /// - Each NoSetListSerialized: ~100 bytes after conversion (heap)
@@ -208,341 +535,40 @@ fn main() {
     /// - Peak RAM during save: ~10.5GB (vec + archive + overhead)
     const MAX_NLISTS_PER_FILE: u64 = 10_000_000;
 
+    // Parse command-line arguments
+    let args = Args::parse();
+
+    // Setup debug/test printing
     debug_print_on();
     debug_print_off();
     test_print_off();
     test_print_on();
 
-    // Parse size range if provided
-    let size_range = if let Some(ref size_str) = args.size {
-        match parse_size_range(size_str) {
-            Ok(range) => Some(range),
-            Err(e) => {
-                eprintln!("Error: {}", e);
-                std::process::exit(1);
-            }
+    // Build unified configuration
+    let config = match build_config(&args, MAX_NLISTS_PER_FILE) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
         }
-    } else {
-        None
     };
 
-    // Parse restart parameters if provided
-    let restart_params = if let Some(ref restart_vec) = args.restart {
-        if restart_vec.len() != 2 {
-            eprintln!("Error: --restart requires exactly 2 arguments: SIZE BATCH");
-            std::process::exit(1);
-        }
-        let size = restart_vec[0] as u8;
-        let batch = restart_vec[1];  // u32 for 5-digit batch numbers
-        if size < 4 || size > 18 {
-            eprintln!("Error: Restart size {} out of range (4-18)", size);
-            std::process::exit(1);
-        }
-        Some((size, batch))
-    } else {
-        None
-    };
-
-    // Parse unitary parameters if provided
-    let unitary_params = if let Some(ref unitary_vec) = args.unitary {
-        if unitary_vec.len() != 2 {
-            eprintln!("Error: --unitary requires exactly 2 arguments: SIZE BATCH");
-            std::process::exit(1);
-        }
-        let size = unitary_vec[0] as u8;
-        let batch = unitary_vec[1];  // u32 for 5-digit batch numbers
-        if size < 3 || size > 17 {
-            eprintln!("Error: Unitary size {} out of range (3-17)", size);
-            std::process::exit(1);
-        }
-        Some((size, batch))
-    } else {
-        None
-    };
-
-    use crate::list_of_nsl::{ListOfNSL, count_size_files, compact_size_files, check_size_files};
+    // Initialize logging for applicable modes
+    if config.mode.requires_logging() {
+        init_log_file();
+    }
 
     banner("Funny Set Exploration)");
     
-    // =====================================================================
-    // COMPACT MODE: Consolidate small files into larger batches
-    // =====================================================================
-    if let Some(compact_size) = args.compact {
-        // Initialize log file for compact mode
-        init_log_file();
-        
-        if compact_size < 3 || compact_size > 18 {
-            eprintln!("Error: Compact size {} out of range (3-18)", compact_size);
+    // Execute mode and handle result
+    match execute_mode(&config) {
+        Ok(message) => {
+            test_print(&format!("\n{}!", message));
+            std::process::exit(0);
+        }
+        Err(e) => {
+            eprintln!("{}", e);
             std::process::exit(1);
-        }
-        
-        test_print(&format!("COMPACT MODE: Consolidating files for size {}", compact_size));
-        test_print("This will replace multiple small files with larger 10M-entry batches\n");
-        
-        // Compact mode: read from input_path, write to output_path (or input_path if not specified)
-        let input_dir = args.input_path.as_deref().unwrap_or(".");
-        let output_dir = args.output_path.as_deref().unwrap_or(input_dir);
-        test_print(&format!("Input directory: {}", input_dir));
-        test_print(&format!("Output directory: {}\n", output_dir));
-        
-        match compact_size_files(input_dir, output_dir, compact_size, MAX_NLISTS_PER_FILE) {
-            Ok(()) => {
-                test_print("\nCompaction completed successfully!");
-                std::process::exit(0);
-            }
-            Err(e) => {
-                eprintln!("Error during compaction: {}", e);
-                std::process::exit(1);
-            }
-        }
-    }
-    
-    // =====================================================================
-    // CHECK MODE: Check repository integrity for a specific size
-    // =====================================================================
-    if let Some(check_size) = args.check {
-        // Initialize log file for check mode
-        init_log_file();
-        
-        if check_size < 3 || check_size > 18 {
-            eprintln!("Error: Check size {} out of range (3-18)", check_size);
-            std::process::exit(1);
-        }
-        
-        test_print(&format!("CHECK MODE: Analyzing repository for size {}", check_size));
-        
-        // Check mode: uses output_path (default: current directory)
-        let check_dir = args.output_path.as_deref().unwrap_or(".");
-        test_print(&format!("Directory: {}\n", check_dir));
-        
-        match check_size_files(check_dir, check_size) {
-            Ok(()) => {
-                test_print("\nCheck completed successfully!");
-                std::process::exit(0);
-            }
-            Err(e) => {
-                eprintln!("Error during check: {}", e);
-                std::process::exit(1);
-            }
-        }
-    }
-    
-    // =====================================================================
-    // COUNT MODE: Count existing files for a specific size
-    // =====================================================================
-    if let Some(count_size) = args.count {
-        // Initialize log file for count mode only
-        init_log_file();
-        
-        if count_size < 3 || count_size > 18 {
-            eprintln!("Error: Count size {} out of range (3-18)", count_size);
-            std::process::exit(1);
-        }
-        
-        test_print(&format!("COUNT MODE: Counting files for size {}", count_size));
-        
-        // Count mode: only uses input_path
-        let input_dir = args.input_path.as_deref().unwrap_or(".");
-        test_print(&format!("Directory: {}\n", input_dir));
-        
-        match count_size_files(input_dir, count_size) {
-            Ok(()) => {
-                test_print("\nCount completed successfully!");
-                std::process::exit(0);
-            }
-            Err(e) => {
-                eprintln!("Error during count: {}", e);
-                std::process::exit(1);
-            }
-        }
-    }
-    
-    if let Some((restart_size, restart_batch)) = restart_params {
-        // =====================================================================
-        // RESTART MODE: Resume from specific batch
-        // =====================================================================
-        test_print(&format!("RESTART MODE: Resuming from size {} batch {}", restart_size, restart_batch));
-        test_print(&format!("Will process through size 18"));
-        test_print(&format!("Batch size: {} entries/file (~1GB, compact)", MAX_NLISTS_PER_FILE.separated_string()));
-        
-        // Restart mode: if only one path given, use for both; otherwise use both
-        let input_dir = args.input_path.as_deref();
-        let output_dir = args.output_path.as_deref();
-        
-        let (read_path, write_path) = match (input_dir, output_dir) {
-            (Some(i), Some(o)) => (i, o),
-            (Some(i), None) => (i, i),
-            (None, Some(o)) => (o, o),
-            (None, None) => (".", ".")
-        };
-        
-        test_print(&format!("Input directory: {}", read_path));
-        test_print(&format!("Output directory: {}", write_path));
-        
-        // If force flag is set, regenerate count file for target size
-        if args.force {
-            test_print(&format!("\nFORCE MODE: Regenerating count file for size {}...", restart_size + 1));
-            match count_size_files(write_path, restart_size + 1) {
-                Ok(()) => test_print("Count file regenerated successfully\n"),
-                Err(e) => {
-                    eprintln!("Error regenerating count file: {}", e);
-                    std::process::exit(1);
-                }
-            }
-        }
-        
-        test_print("\n======================\n");
-
-        // Initialize ListOfNSL with paths
-        let mut no_set_lists: ListOfNSL = ListOfNSL::with_paths(read_path, write_path);
-
-        // Process from restart point through size 18
-        // restart_size is the INPUT size, so we create output starting from restart_size+1
-        for target_size in (restart_size + 1)..=18 {
-            let source_size = target_size - 1;
-            
-            if source_size == restart_size {
-                // First iteration: start from specified batch of the input size
-                test_print(&format!("Start processing files to create no-set-lists of size {} (from input batch {}):\n", 
-                    target_size, restart_batch));
-                let _nb_new = no_set_lists.process_from_batch(
-                    source_size,  // Input size
-                    restart_batch,
-                    &MAX_NLISTS_PER_FILE
-                );
-            } else {
-                // Subsequent iterations: process all files
-                test_print(&format!("Start processing files to create no-set-lists of size {}:\n", target_size));
-                let _nb_new = no_set_lists.process_all_files_of_current_size_n(
-                    source_size, 
-                    &MAX_NLISTS_PER_FILE
-                );
-            }
-            
-            test_print(&format!("\nCompleted size {}!\n", target_size));
-        }
-    } else if let Some((unitary_size, unitary_batch)) = unitary_params {
-        // =====================================================================
-        // UNITARY MODE: Process a single input batch
-        // =====================================================================
-        test_print(&format!("UNITARY MODE: Processing input size {} batch {}", unitary_size, unitary_batch));
-        test_print(&format!("Output: size {} files", unitary_size + 1));
-        test_print(&format!("Batch size: {} entries/file (~1GB, compact)", MAX_NLISTS_PER_FILE.separated_string()));
-        
-        // Unitary mode: if -o not given, write to input directory; if -i not given, read from current
-        let input_dir = args.input_path.as_deref().unwrap_or(".");
-        let output_dir = args.output_path.as_deref().unwrap_or(input_dir);
-        
-        test_print(&format!("Input directory: {}", input_dir));
-        test_print(&format!("Output directory: {}", output_dir));
-        
-        // If force flag is set, regenerate count file for target size
-        if args.force {
-            test_print(&format!("\nFORCE MODE: Regenerating count file for size {}...", unitary_size + 1));
-            match count_size_files(output_dir, unitary_size + 1) {
-                Ok(()) => test_print("Count file regenerated successfully\n"),
-                Err(e) => {
-                    eprintln!("Error regenerating count file: {}", e);
-                    std::process::exit(1);
-                }
-            }
-        }
-        
-        test_print("\n======================\n");
-
-        // Initialize ListOfNSL with paths
-        let mut no_set_lists: ListOfNSL = ListOfNSL::with_paths(input_dir, output_dir);
-
-        // Process only the specified batch
-        test_print(&format!("Processing input size {} batch {}:", unitary_size, unitary_batch));
-        let _nb_new = no_set_lists.process_single_batch(
-            unitary_size,
-            unitary_batch,
-            &MAX_NLISTS_PER_FILE
-        );
-        
-        test_print(&format!("\nUnitary processing completed for size {} batch {}!\n", unitary_size, unitary_batch));
-    } else if let Some((start_size, end_size)) = size_range {
-        // =====================================================================
-        // CLI MODE: Process size range
-        // =====================================================================
-        if start_size == end_size {
-            test_print(&format!("Target size = {} cards", start_size));
-        } else {
-            test_print(&format!("Size range = {} to {} cards", start_size, end_size));
-        }
-        test_print(&format!("Batch size: {} entries/file (~1GB, compact)", MAX_NLISTS_PER_FILE.separated_string()));
-        
-        if let Some(ref path) = args.output_path {
-            test_print(&format!("Output directory: {}", path));
-        } else {
-            test_print("Output directory: current directory");
-        }
-        test_print("\n======================\n");
-
-        // Initialize ListOfNSL with optional custom path
-        let mut no_set_lists: ListOfNSL = match args.output_path {
-            Some(path) => ListOfNSL::with_path(&path),
-            None => ListOfNSL::new(),
-        };
-
-        // Handle size 4: need to create seed lists first
-        if start_size == 4 {
-            test_print("Creating seed lists (size 3)...");
-            no_set_lists.create_seed_lists();
-            test_print("Seed lists created successfully.\n");
-        }
-
-        // Process each size in the range
-        for target_size in start_size..=end_size {
-            let source_size = target_size - 1;
-            test_print(&format!("Start processing files to create no-set-lists of size {}:", target_size));
-            
-            let _nb_new = no_set_lists.process_all_files_of_current_size_n(
-                source_size, 
-                &MAX_NLISTS_PER_FILE
-            );
-            
-            test_print(&format!("\nCompleted size {}! Generated files: no-set-list_{:02}_batch_*.rkyv\n", 
-                target_size, target_size));
-        }
-    } else {
-        // =====================================================================
-        // DEFAULT MODE - process the whole pipeline: seeds + sizes 4 to 18
-        // =====================================================================
-        test_print("   - will create          58.896 no-set-lists with  3 cards");
-        test_print("   - will create       1.004.589 no-set-lists with  4 cards");
-        test_print("   - will create      13.394.538 no-set-lists with  5 cards");
-        test_print("   - will create     141.370.218 no-set-lists with  6 cards");
-        test_print("   - will create   1.180.345.041 no-set-lists with  7 cards");
-        test_print("   - will create   7.920.450.378 no-set-lists with  8 cards");
-        test_print("   - will create  43.126.538.805 no-set-lists with  9 cards");
-        test_print("   - will create  __.___.___.___ no-set-lists with 10 cards");
-        test_print("   - will create  __.___.___.___ no-set-lists with 11 cards");
-        test_print("   - will create  __.___.___.___ no-set-lists with 12 cards");
-        test_print("   - will create  __.___.___.___ no-set-lists with 13 cards");
-        test_print("   - will create  __.___.___.___ no-set-lists with 14 cards");
-        test_print("   - will create  __.___.___.___ no-set-lists with 15 cards");
-        test_print("   - will create  __.___.___.___ no-set-lists with 16 cards");
-        test_print("   - will create  __.___.___.___ no-set-lists with 17 cards");
-        test_print("   - will create  __.___.___.___ no-set-lists with 18 cards");
-        test_print("\n======================\n");
-
-        // Initialize with output path if provided
-        let mut no_set_lists: ListOfNSL = match args.output_path {
-            Some(path) => ListOfNSL::with_path(&path),
-            None => ListOfNSL::with_path(r"T:\data\funny_set_exploration"),
-        };
-
-        // Create all seed lists
-        test_print("Creating seed lists...");
-        no_set_lists.create_seed_lists();
-
-        // Expand from seed_lists to size 4, 5, 6...
-        for size in 3..17 {
-            test_print(&format!("\nStart processing files to create no-set-lists of size {}:", size+1));
-            let _nb_new = no_set_lists.process_all_files_of_current_size_n(size, 
-                &MAX_NLISTS_PER_FILE);
         }
     }
 }
