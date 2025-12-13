@@ -1,8 +1,8 @@
 /// Manage the search for the grail of Set: combinations of 12 / 15 / 18 cards 
 /// with no sets
 ///
-/// Version 0.4.5 - Extended batch numbering to 4 digits
-/// Refactored: Phases 1-3 complete - unified configuration and mode dispatch
+/// Version 0.4.6 - Input-intermediary file generation and atomic writes
+/// Added: Automatic tracking of output files per input batch with atomic writes
 /// 
 /// CLI Usage:
 ///   funny.exe --size 5 -o T:\data\funny_set_exploration              # Build size 5 from size 4

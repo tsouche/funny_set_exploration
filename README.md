@@ -4,15 +4,16 @@ A Rust-based exhaustive search algorithm to find all combinations of 12, 15, and
 
 ## Project Status
 
-**Current Version:** 0.4.4 (December 2025)
+**Current Version:** 0.4.6 (December 2025)
 
 **Key Features:**
 
+- **Input-intermediary files**: Automatic tracking of which output files came from which input batches
 - Restart capability with optimized filename-based batch discovery (Method 3)
 - Dual input/output path support for safer processing
-- Robust count mode with batched processing and idempotency
+- Enhanced count mode leveraging input-intermediary files for faster processing
 - Repository integrity checking (missing batches/files detection)
-- Human-readable intermediary files with count details per file
+- Human-readable intermediary files with atomic writes for reliability
 - 5-digit batch numbering for scalability
 - Continuous batch numbering across source files
 

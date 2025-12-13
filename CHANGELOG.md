@@ -5,6 +5,58 @@ All notable changes to the funny_set_exploration project are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.6] - 2025-12-13
+
+### Added
+
+- **Input-intermediary file generation**: Automatic tracking of output files created from each input batch
+  - New file format: `no_set_list_input_intermediate_count_{size:02}_{input_batch:04}.txt`
+  - Generated automatically during `--size`, `--restart`, and `--unitary` modes
+  - Contains one line per output file created from the input batch
+  - Format: `   ... {count:>8} lists in {output_filename}`
+  - Enables precise tracking of which output files were generated from which input batches
+  - Improves restart capability and repository integrity verification
+
+- **Enhanced count mode**: Leverages input-intermediary files for efficiency
+  - First checks for existing input-intermediary files before reading .rkyv files
+  - Creates missing input-intermediary files on-demand (idempotent operation)
+  - Groups files by source batch for organized processing
+  - Shows progress for both valid (skipped) and created files
+  - Significantly faster when input-intermediary files exist (no need to read large .rkyv files)
+
+### Changed
+
+- **Atomic file writes**: Input-intermediary files now written atomically
+  - Lines buffered in memory during batch processing
+  - File written in single operation only after all output files are successfully created
+  - If process interrupted mid-batch, no incomplete file is created
+  - Ensures file existence indicates complete batch processing
+  - Applies to both generation modes and count mode
+
+- **Improved output formatting**: Cleaner progress messages
+  - Removed redundant batch headers during processing
+  - Single "saving input intermediary file" message per batch
+  - Blank lines strategically placed for readability
+  - Count mode shows which batches are skipped vs. created
+  - Consistent formatting between generation and count modes
+
+### Technical Details
+
+**Input-Intermediary File System:**
+- **Purpose**: Track which output batches were created from each input batch
+- **Location**: Stored in output directory alongside output files
+- **Naming**: `no_set_list_input_intermediate_count_{source_size:02}_{source_batch:04}.txt`
+- **Content**: One line per output file, sorted by output batch number
+- **Validation**: Count mode verifies file completeness (line count matches output file count)
+- **Recovery**: Missing or incomplete files automatically recreated by count mode
+
+**Implementation:**
+- Added `input_intermediary_buffer` field to `ListOfNSL` struct
+- New methods: `buffer_input_intermediary_line()`, `write_input_intermediary_file()`
+- Modified `save_new_to_file()` to buffer output file information
+- Modified `process_batch_loop()` to write buffered lines atomically
+- Count mode groups files by source batch for efficient processing
+
 ## [0.4.5] - 2025-12-13
 
 ### Changed

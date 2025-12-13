@@ -1,13 +1,15 @@
-/// Version 0.4.0: Hybrid stack-optimized computation with heap-based I/O + Restart capability
+/// Version 0.4.6: Hybrid stack-optimized computation with heap-based I/O + Input-intermediary tracking
 /// 
 /// This implementation combines the best of both worlds:
 /// - Uses NoSetList (stack arrays) for computation → 4-5× faster
 /// - Converts to NoSetListSerialized (heap Vecs) for I/O → compact 2GB files
+/// - Automatic input-intermediary file generation for output tracking
 /// 
 /// Performance characteristics:
 /// - Computation: Same speed as v0.3.0 (stack-optimized)
 /// - File size: ~2GB per 20M batch (compact with size_32 rkyv)
 /// - Memory: Moderate (~12-15GB peak during conversion + save)
+/// - Tracking: Atomic writes ensure file integrity and restart reliability
 ///
 /// This is the only active version of the project.
 
@@ -39,6 +41,7 @@ pub struct ListOfNSL {
     pub computation_time: f64,         // time spent in core algorithm
     pub file_io_time: f64,             // time spent in file I/O operations
     pub conversion_time: f64,          // time spent converting between formats
+    input_intermediary_buffer: Vec<String>, // Buffer for input-intermediary file lines
 }
 
 impl ListOfNSL {
@@ -59,6 +62,7 @@ impl ListOfNSL {
             computation_time: 0.0,
             file_io_time: 0.0,
             conversion_time: 0.0,
+            input_intermediary_buffer: Vec::new(),
         }
     }
     
@@ -79,6 +83,7 @@ impl ListOfNSL {
             computation_time: 0.0,
             file_io_time: 0.0,
             conversion_time: 0.0,
+            input_intermediary_buffer: Vec::new(),
         }
     }
     
@@ -99,6 +104,7 @@ impl ListOfNSL {
             computation_time: 0.0,
             file_io_time: 0.0,
             conversion_time: 0.0,
+            input_intermediary_buffer: Vec::new(),
         }
     }
     
@@ -293,6 +299,9 @@ impl ListOfNSL {
             true => {
                 self.file_io_time += io_start.elapsed().as_secs_f64();
                 
+                // Buffer this output batch info for the input-intermediary file
+                self.buffer_input_intermediary_line(self.new_output_batch, additional_new);
+                
                 self.new_total_list_count += additional_new;
                 self.new_output_batch += 1;
                 self.new.clear();
@@ -308,6 +317,52 @@ impl ListOfNSL {
         }
     }
     
+    /// Buffer count information to be written to input-intermediary file later
+    /// Records each output batch created from the current input batch
+    fn buffer_input_intermediary_line(&mut self, output_batch: u32, output_count: u64) {
+        // Generate the output filename for this batch
+        let output_filename = format!(
+            "nsl_{:02}_batch_{:05}_to_{:02}_batch_{:05}.rkyv",
+            self.current_size,
+            self.current_file_batch,
+            self.current_size + 1,
+            output_batch
+        );
+        
+        // Add line to buffer
+        let line = format!("   ... {:>8} lists in {}", output_count, output_filename);
+        self.input_intermediary_buffer.push(line);
+    }
+    
+    /// Write buffered lines to input-intermediary file in one operation
+    fn write_input_intermediary_file(&mut self) {
+        if self.input_intermediary_buffer.is_empty() {
+            return;
+        }
+        
+        let filename = format!(
+            "{}/no_set_list_input_intermediate_count_{:02}_{:04}.txt",
+            self.output_path, self.current_size, self.current_file_batch
+        );
+        
+        // Write all buffered lines at once
+        use std::io::Write;
+        match std::fs::File::create(&filename) {
+            Ok(mut file) => {
+                for line in &self.input_intermediary_buffer {
+                    if let Err(e) = writeln!(file, "{}", line) {
+                        debug_print(&format!("write_input_intermediary_file: Error writing to {}: {}", filename, e));
+                    }
+                }
+                // Clear buffer after successful write
+                self.input_intermediary_buffer.clear();
+            },
+            Err(e) => {
+                debug_print(&format!("write_input_intermediary_file: Error creating {}: {}", filename, e));
+            }
+        }
+    }
+
     /// Process one input file using stack-optimized computation
     /// Creates output files with modular naming and closes output when input exhausted
     fn process_one_file_of_current_size_n(&mut self, max: &u64) -> u64 {
@@ -358,7 +413,7 @@ impl ListOfNSL {
         
         // Save any remaining lists from this input file (even if < max)
         if !self.new.is_empty() {
-            test_print(&format!("   ... saving final batch ({} lists), output batch {}\n", 
+            test_print(&format!("   ... saving final batch ({} lists), output batch {}", 
                 self.new.len().separated_string(), self.new_output_batch));
             debug_print(&format!("process_one_file_of_current_size_n: saving final batch of {}", 
                 self.new.len()));
@@ -428,13 +483,27 @@ impl ListOfNSL {
         let mut batches_processed = 0;
         
         loop {
+            // Add blank line before loading next batch (except for the first one)
+            if batches_processed > 0 {
+                test_print("");
+            }
             test_print(&format!("   ... loading batch {}", self.current_file_batch));
             let loaded = self.refill_current_from_file();
             
             if loaded {
                 test_print(&format!("   ... loaded {:>10} lists from batch {}", 
                     self.current.len().separated_string(), self.current_file_batch));
+                
                 self.process_one_file_of_current_size_n(max);
+                
+                // Write buffered input-intermediary file in one operation
+                let intermediary_filename = format!(
+                    "no_set_list_input_intermediate_count_{:02}_{:04}.txt",
+                    self.current_size, self.current_file_batch
+                );
+                self.write_input_intermediary_file();
+                test_print(&format!("   ... saving input intermediary file {}", intermediary_filename));
+                
                 self.current_file_batch += 1;
                 batches_processed += 1;
                 
@@ -570,11 +639,20 @@ const COUNT_BATCH_SIZE: usize = 10;
 
 /// Count files for a given target size and create summary report
 /// 
+/// This function uses a two-tier intermediary file system:
+/// 1. Input-intermediary files: no_set_list_input_intermediate_count_{size:02}_{input_batch:04}.txt
+///    - Created automatically during file generation (--size, --restart, --unitary modes)
+///    - One file per input batch, tracks which files were read
+/// 2. Output-intermediary files: no_set_list_intermediate_count_{target_size:02}_{batch_idx:04}.txt
+///    - Created by --count mode by aggregating input-intermediary files
+///    - Used to consolidate into final report
+/// 
 /// File naming:
-/// - Intermediary files: no_set_list_intermediate_count_{target_size:02}_{batch_idx:04}.txt
+/// - Input-intermediary: no_set_list_input_intermediate_count_{size:02}_{input_batch:04}.txt
+/// - Output-intermediary: no_set_list_intermediate_count_{target_size:02}_{batch_idx:04}.txt
 /// - Final report: no_set_list_count_{target_size:02}.txt
 /// 
-/// Both are stored in the same directory as the source files (input_path)
+/// All files are stored in the same directory as the source files (base_path)
 pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()> {
     use std::fs;
     use std::path::PathBuf;
@@ -584,18 +662,157 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
     
     let start_time = std::time::Instant::now();
     
-    // Collect all matching files
+    // Step 1: Scan for all .rkyv files
     let entries = fs::read_dir(base_path)?;
     let pattern = format!("_to_{:02}_batch_", target_size);
     
     let mut all_files: Vec<PathBuf> = Vec::new();
     for entry in entries.flatten() {
         if let Some(name) = entry.file_name().to_str() {
-            // Match both regular files (nsl_XX_batch_*) and seed files (nsl_00_batch_*)
             if name.starts_with("nsl_") && name.contains(&pattern) && name.ends_with(".rkyv") {
                 all_files.push(entry.path());
             }
         }
+    }
+    all_files.sort();
+    
+    // Step 2: Group files by source batch and check/create input-intermediary files
+    use std::collections::BTreeMap;
+    
+    // Group files by source batch number
+    let mut files_by_source_batch: BTreeMap<u32, Vec<PathBuf>> = BTreeMap::new();
+    
+    for file_path in &all_files {
+        if let Some(name) = file_path.file_name().and_then(|n| n.to_str()) {
+            // Parse source batch from filename: nsl_XX_batch_YYYYY_to_ZZ_batch_BBBBB.rkyv
+            if let Some(to_pos) = name.find("_to_") {
+                let before_to = &name[..to_pos];
+                if let Some(src_batch_pos) = before_to.rfind("_batch_") {
+                    let src_batch_str = &before_to[src_batch_pos + 7..];
+                    if let Ok(src_batch) = src_batch_str.parse::<u32>() {
+                        files_by_source_batch.entry(src_batch)
+                            .or_insert_with(Vec::new)
+                            .push(file_path.clone());
+                    }
+                }
+            }
+        }
+    }
+    
+    test_print(&format!("   ... Found {} source batches producing {} output files", 
+        files_by_source_batch.len(), all_files.len()));
+    
+    // Step 3: Check and create input-intermediary files (one per source batch)
+    let mut batches_to_create = Vec::new();
+    let mut batches_to_skip = Vec::new();
+    
+    for (src_batch, files) in &files_by_source_batch {
+        let input_intermediary_file = format!(
+            "{}/no_set_list_input_intermediate_count_{:02}_{:04}.txt",
+            base_path, target_size - 1, src_batch
+        );
+        
+        // Check if input-intermediary file exists and contains all files
+        let intermediary_path = std::path::Path::new(&input_intermediary_file);
+        let mut is_valid = false;
+        
+        if intermediary_path.exists() {
+            // Check if file contains entries for all output files from this source batch
+            use std::io::{BufRead, BufReader};
+            if let Ok(file) = fs::File::open(&input_intermediary_file) {
+                let reader = BufReader::new(file);
+                let lines: Vec<String> = reader.lines().filter_map(|l| l.ok()).collect();
+                
+                // Should have one line per output file
+                if lines.len() == files.len() {
+                    is_valid = true;
+                }
+            }
+        }
+        
+        if is_valid {
+            batches_to_skip.push(*src_batch);
+        } else {
+            batches_to_create.push((*src_batch, files.clone()));
+        }
+    }
+    
+    // Step 4: Show valid files and create missing/invalid input-intermediary files
+    if !batches_to_create.is_empty() {
+        test_print(&format!("   ... {} input-intermediary files are valid", batches_to_skip.len()));
+        test_print(&format!("   ... Creating/updating {} input-intermediary files...\n", 
+            batches_to_create.len()));
+        
+        let mut batch_counter = 0;
+        
+        // Process all batches in order, showing valid ones and creating missing ones
+        for (src_batch, files) in &files_by_source_batch {
+            // Add blank line before each batch (except the first)
+            if batch_counter > 0 {
+                test_print("");
+            }
+            batch_counter += 1;
+            
+            if batches_to_skip.contains(src_batch) {
+                // Valid file - just mention it's being skipped
+                let intermediary_filename = format!(
+                    "no_set_list_input_intermediate_count_{:02}_{:04}.txt",
+                    target_size - 1, src_batch
+                );
+                test_print(&format!("   ... Skipping source batch {:04}: {} is valid ({} files)", 
+                    src_batch, intermediary_filename, files.len()));
+            } else {
+                // Need to create this file
+                let input_intermediary_file = format!(
+                    "{}/no_set_list_input_intermediate_count_{:02}_{:04}.txt",
+                    base_path, target_size - 1, src_batch
+                );
+                let intermediary_filename = format!(
+                    "no_set_list_input_intermediate_count_{:02}_{:04}.txt",
+                    target_size - 1, src_batch
+                );
+                
+                test_print(&format!("   ... Creating input-intermediary file for source batch {:04}", 
+                    src_batch));
+                
+                // Buffer all lines first, then write atomically
+                let mut buffer = Vec::new();
+                for file_path in files {
+                    if let Some(vec_nlist) = read_from_file_serialized(file_path.to_str().unwrap()) {
+                        let count = vec_nlist.len() as u64;
+                        let filename = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
+                        
+                        // Display the same format as restart mode
+                        test_print(&format!("       {:>10} lists in {}", 
+                            count.separated_string(), filename));
+                        
+                        // Buffer the line
+                        buffer.push(format!("   ... {:>8} lists in {}", count, filename));
+                    }
+                }
+                
+                // Write all lines atomically only after all files are read successfully
+                use std::io::Write;
+                match fs::File::create(&input_intermediary_file) {
+                    Ok(mut file) => {
+                        for line in &buffer {
+                            if let Err(e) = writeln!(file, "{}", line) {
+                                debug_print(&format!("   ... Error writing to input-intermediary file: {}", e));
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        debug_print(&format!("   ... Error creating input-intermediary file: {}", e));
+                    }
+                }
+                
+                // Final message about saving the input intermediary file
+                test_print(&format!("       saving input intermediary file {}", intermediary_filename));
+            }
+        }
+        test_print(&format!("\n   ... Input-intermediary files updated"));
+    } else {
+        test_print(&format!("   ... All {} input-intermediary files are valid and up-to-date", batches_to_skip.len()));
     }
     
     if all_files.is_empty() {
@@ -603,12 +820,9 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
         return Ok(());
     }
     
-    // Sort files to ensure consistent batch composition across runs
-    all_files.sort();
-    
     test_print(&format!("   ... Found {} files to count", all_files.len()));
     
-    // Process files in batches
+    // Process files in batches to create output-intermediary files
     let num_batches = (all_files.len() + COUNT_BATCH_SIZE - 1) / COUNT_BATCH_SIZE;
     test_print(&format!("   ... Processing in {} batches of up to {} files each", num_batches, COUNT_BATCH_SIZE));
     
@@ -620,9 +834,9 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
         let intermediary_filename = format!("{}/no_set_list_intermediate_count_{:02}_{:04}.txt", 
             base_path, target_size, batch_idx);
         
-        // Check if intermediary file exists and is up-to-date
+        // Check if output-intermediary file exists and is up-to-date
         if is_intermediary_file_valid(&intermediary_filename, chunk)? {
-            test_print(&format!("\n   ... Batch {:04}/{}: Skipping (intermediary file is up-to-date)", 
+            test_print(&format!("\n   ... Batch {:04}/{}: Skipping (output-intermediary file is up-to-date)", 
                 batch_idx, num_batches));
             batches_skipped += 1;
         } else {
@@ -653,6 +867,11 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
 }
 
 /// Check if an intermediary file is valid (exists and is newer than all source files)
+/// Validate an input-intermediary file for a given input batch
+/// Checks:
+/// 1. File exists
+/// 2. File's timestamp is more recent than the source .rkyv file
+/// 3. File contains an entry for the source .rkyv file
 fn is_intermediary_file_valid(intermediary_file: &str, source_files: &[std::path::PathBuf]) -> std::io::Result<bool> {
     use std::fs;
     
@@ -710,7 +929,7 @@ fn process_count_batch(files: &[std::path::PathBuf], output_file: &str, _target_
                                 if let Some(vec_nlist) = read_from_file_serialized(path.to_str().unwrap()) {
                                     let count = vec_nlist.len() as u64;
                                     file_info.insert((source_batch, target_batch), (name.to_string(), count));
-                                    test_print(&format!("      ... {:>10} lists in {}",
+                                    test_print(&format!("      {:>10} lists in {}",
                                         count.separated_string(), name));
                                 }
                             }
