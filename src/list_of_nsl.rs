@@ -571,7 +571,7 @@ const COUNT_BATCH_SIZE: usize = 10;
 /// Count files for a given target size and create summary report
 /// 
 /// File naming:
-/// - Intermediary files: no_set_list_intermediate_count_{target_size:02}_{batch_idx:03}.txt
+/// - Intermediary files: no_set_list_intermediate_count_{target_size:02}_{batch_idx:04}.txt
 /// - Final report: no_set_list_count_{target_size:02}.txt
 /// 
 /// Both are stored in the same directory as the source files (input_path)
@@ -617,16 +617,16 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
     let mut batches_processed = 0usize;
     
     for (batch_idx, chunk) in all_files.chunks(COUNT_BATCH_SIZE).enumerate() {
-        let intermediary_filename = format!("{}/no_set_list_intermediate_count_{:02}_{:03}.txt", 
+        let intermediary_filename = format!("{}/no_set_list_intermediate_count_{:02}_{:04}.txt", 
             base_path, target_size, batch_idx);
         
         // Check if intermediary file exists and is up-to-date
         if is_intermediary_file_valid(&intermediary_filename, chunk)? {
-            test_print(&format!("\n   ... Batch {:03}/{}: Skipping (intermediary file is up-to-date)", 
+            test_print(&format!("\n   ... Batch {:04}/{}: Skipping (intermediary file is up-to-date)", 
                 batch_idx, num_batches));
             batches_skipped += 1;
         } else {
-            test_print(&format!("\n   ... Batch {:03}/{}: Processing {} files...", 
+            test_print(&format!("\n   ... Batch {:04}/{}: Processing {} files...", 
                 batch_idx, num_batches, chunk.len()));
             
             process_count_batch(chunk, &intermediary_filename, target_size)?;

@@ -5,6 +5,16 @@ All notable changes to the funny_set_exploration project are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.5] - 2025-12-13
+
+### Changed
+
+- **Extended batch numbering capacity**: Updated intermediary count files to support 4-digit batch numbers
+  - Changed format from `no_set_list_intermediate_count_{size:02}_{batch:03}.txt` to `{batch:04}.txt`
+  - Required for sizes 10+ which generate >1200 batches (11544 files ÷ 10 = 1155 batches)
+  - Batch display messages also updated from `{:03}` to `{:04}` format
+  - Impact: Count mode now properly handles large file collections without numbering overflow
+
 ## [0.4.4] - 2025-12-13
 
 ### Fixed
@@ -76,7 +86,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Intermediary filename bug**: Removed accidental prefix in count mode
   - Issue: Intermediary filenames had `"   ... "` prepended to path
-  - Result: Invalid paths like `"   ... .\07_to_08\/no_set_list_intermediate_count_08_000.txt"`
+  - Result: Invalid paths like `"   ... .\07_to_08\/no_set_list_intermediate_count_08_0000.txt"`
   - Solution: Removed formatting prefix from filename construction
   - Impact: Count mode now properly creates and checks intermediary files
 
@@ -97,7 +107,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Enables safer processing with separate source/target locations
 - **Improved count mode robustness**: Batched processing with idempotency
   - Processes files in batches of 10 (COUNT_BATCH_SIZE)
-  - Creates intermediary tracking files: `no_set_list_intermediate_count_{size:02}_{batch:03}.txt`
+  - Creates intermediary tracking files: `no_set_list_intermediate_count_{size:02}_{batch:04}.txt`
   - Timestamp-based idempotency: Skips batches if intermediary file is newer than source files
   - Handles thousands of files efficiently without performance degradation
   - Intermediary files kept for debugging and restart capability

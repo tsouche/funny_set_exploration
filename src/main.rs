@@ -1,7 +1,7 @@
 /// Manage the search for the grail of Set: combinations of 12 / 15 / 18 cards 
 /// with no sets
 ///
-/// Version 0.4.4 - Code refactoring + improved consistency
+/// Version 0.4.5 - Extended batch numbering to 4 digits
 /// Refactored: Phases 1-3 complete - unified configuration and mode dispatch
 /// 
 /// CLI Usage:
