@@ -363,8 +363,7 @@ fn main() {
         // =====================================================================
         test_print(&format!("RESTART MODE: Resuming from size {} batch {}", restart_size, restart_batch));
         test_print(&format!("Will process through size 18"));
-        test_print("Strategy: Stack computation + Heap I/O");
-        test_print(&format!("Batch size: {} entries/file (~2GB, compact)", MAX_NLISTS_PER_FILE.separated_string()));
+        test_print(&format!("Batch size: {} entries/file (~1GB, compact)", MAX_NLISTS_PER_FILE.separated_string()));
         
         // Restart mode: if only one path given, use for both; otherwise use both
         let input_dir = args.input_path.as_deref();
@@ -428,8 +427,7 @@ fn main() {
         // =====================================================================
         test_print(&format!("UNITARY MODE: Processing input size {} batch {}", unitary_size, unitary_batch));
         test_print(&format!("Output: size {} files", unitary_size + 1));
-        test_print("Strategy: Stack computation + Heap I/O");
-        test_print(&format!("Batch size: {} entries/file (~2GB, compact)", MAX_NLISTS_PER_FILE.separated_string()));
+        test_print(&format!("Batch size: {} entries/file (~1GB, compact)", MAX_NLISTS_PER_FILE.separated_string()));
         
         // Unitary mode: if -o not given, write to input directory; if -i not given, read from current
         let input_dir = args.input_path.as_deref().unwrap_or(".");
@@ -473,8 +471,7 @@ fn main() {
         } else {
             test_print(&format!("Size range = {} to {} cards", start_size, end_size));
         }
-        test_print("Strategy: Stack computation + Heap I/O");
-        test_print(&format!("Batch size: {} entries/file (~2GB, compact)", MAX_NLISTS_PER_FILE.separated_string()));
+        test_print(&format!("Batch size: {} entries/file (~1GB, compact)", MAX_NLISTS_PER_FILE.separated_string()));
         
         if let Some(ref path) = args.output_path {
             test_print(&format!("Output directory: {}", path));

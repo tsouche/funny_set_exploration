@@ -484,9 +484,8 @@ impl ListOfNSL {
         
         // Process files starting from start_batch
         loop {
-            debug_print(&format!("process_from_batch: loading batch {} for size {:02}", 
-                self.current_file_batch, self.current_size));
-            
+            test_print(&format!("   ... loading batch {}", 
+                self.current_file_batch));
             let loaded = self.refill_current_from_file();
             if loaded {
                 test_print(&format!("   ... loaded {:>10} lists from batch {}", 
