@@ -558,7 +558,7 @@ fn main() {
         init_log_file();
     }
 
-    banner("Funny Set Exploration");
+    banner(concat!("Funny Set Exploration [", env!("CARGO_PKG_VERSION"), "]"));
     
     // Execute mode and handle result
     match execute_mode(&config) {
