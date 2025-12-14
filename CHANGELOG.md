@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Format: `{:06}` for 6-digit vs. `{:05}` for 5-digit batch numbers
   - Applies consistently across all file naming and display messages
 
+- **Count mode behavior**: `--count` now reads existing input-intermediary files (if present) to build the global count report and does not create/update these small files; ensure intermediary files exist for accurate counts.
+
 ### Technical Details
 
 **Batch Format Threshold:**

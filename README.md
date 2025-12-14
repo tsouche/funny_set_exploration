@@ -298,16 +298,21 @@ pub struct ListOfNlist {
 
 ### File Format
 
-Output files use rkyv zero-copy serialization with modular naming:
+Output files use rkyv zero-copy serialization with modular naming, where the batch fields can be either 5-digit or 6-digit zero-padded widths:
 
 ```bash
-nsl_{source_size:02}_batch_{source_batch:05}_to_{target_size:02}_batch_{target_batch:05}.rkyv
+nsl_{source_size:02}_batch_{source_batch:05|06}_to_{target_size:02}_batch_{target_batch:05|06}.rkyv
+
+- Source and target batch fields use either 5-digit or 6-digit zero-padded widths depending on size:
+  - **5 digits** for sizes < 11 (e.g., `00000`)
+  - **6 digits** for sizes >= 11 (e.g., `000000`)
 ```
 
 Examples:
 
 - `nsl_03_batch_00000_to_04_batch_00000.rkyv` - From size 3 batch 0 to size 4 batch 0
 - `nsl_05_batch_00001_to_06_batch_00012.rkyv` - From size 5 batch 1 to size 6 batch 12
+- `nsl_10_batch_00000_to_11_batch_000000.rkyv` - Size 11 target uses 6-digit batch numbers
 
 ### Performance Characteristics
 
