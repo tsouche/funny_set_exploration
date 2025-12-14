@@ -4,7 +4,7 @@ A Rust-based exhaustive search algorithm to find all combinations of 12, 15, and
 
 ## Project Status
 
-**Current Version:** 0.4.6 (December 2025)
+**Current Version:** 0.4.7 (December 2025)
 
 **Key Features:**
 

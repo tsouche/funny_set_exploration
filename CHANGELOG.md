@@ -5,6 +5,31 @@ All notable changes to the funny_set_exploration project are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.7] - 2025-12-13
+
+### Changed
+
+- **Batch number format**: Extended to 6 digits for sizes >= 11
+  - Output files: Use 6-digit batch numbers when target_size >= 11
+  - Input files: Use 6-digit batch numbers when source_size >= 11
+  - Input-intermediary files: Use 6-digit batch numbers when size >= 11
+  - Output-intermediary files: Use 6-digit batch numbers when target_size >= 11
+  - Accommodates expected file counts: ~21,550 for size 10, ~85,000 for size 11+
+  - Format: `{:06}` for 6-digit vs. `{:05}` for 5-digit batch numbers
+  - Applies consistently across all file naming and display messages
+
+### Technical Details
+
+**Batch Format Threshold:**
+
+- **Output filenames**: 6 digits when target_size >= 11
+  - Example: `nsl_10_batch_00042_to_11_batch_012345.rkyv`
+- **Input-intermediary**: 6 digits when size >= 11  
+  - Example: `no_set_list_input_intermediate_count_11_012345.txt`
+- **Output-intermediary**: 6 digits when target_size >= 11
+  - Example: `no_set_list_intermediate_count_11_012345.txt`
+- **Backward compatible**: Files for sizes < 11 continue using 5-digit format
+
 ## [0.4.6] - 2025-12-13
 
 ### Added
@@ -13,7 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - New file format: `no_set_list_input_intermediate_count_{size:02}_{input_batch:04}.txt`
   - Generated automatically during `--size`, `--restart`, and `--unitary` modes
   - Contains one line per output file created from the input batch
-  - Format: `   ... {count:>8} lists in {output_filename}`
+  - Format: `... {count:>8} lists in {output_filename}`
   - Enables precise tracking of which output files were generated from which input batches
   - Improves restart capability and repository integrity verification
 
@@ -43,6 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Technical Details
 
 **Input-Intermediary File System:**
+
 - **Purpose**: Track which output batches were created from each input batch
 - **Location**: Stored in output directory alongside output files
 - **Naming**: `no_set_list_input_intermediate_count_{source_size:02}_{source_batch:04}.txt`
@@ -51,6 +77,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Recovery**: Missing or incomplete files automatically recreated by count mode
 
 **Implementation:**
+
 - Added `input_intermediary_buffer` field to `ListOfNSL` struct
 - New methods: `buffer_input_intermediary_line()`, `write_input_intermediary_file()`
 - Modified `save_new_to_file()` to buffer output file information

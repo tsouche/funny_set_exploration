@@ -558,7 +558,7 @@ fn main() {
         init_log_file();
     }
 
-    banner("Funny Set Exploration)");
+    banner("Funny Set Exploration");
     
     // Execute mode and handle result
     match execute_mode(&config) {

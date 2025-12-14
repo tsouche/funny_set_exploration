@@ -321,12 +321,17 @@ impl ListOfNSL {
     /// Records each output batch created from the current input batch
     fn buffer_input_intermediary_line(&mut self, output_batch: u32, output_count: u64) {
         // Generate the output filename for this batch
+        // Use 6-digit batch numbers for sizes >= 11
+        let src_batch_width = if self.current_size >= 11 { 6 } else { 5 };
+        let tgt_batch_width = if self.current_size + 1 >= 11 { 6 } else { 5 };
         let output_filename = format!(
-            "nsl_{:02}_batch_{:05}_to_{:02}_batch_{:05}.rkyv",
+            "nsl_{:02}_batch_{:0width1$}_to_{:02}_batch_{:0width2$}.rkyv",
             self.current_size,
             self.current_file_batch,
             self.current_size + 1,
-            output_batch
+            output_batch,
+            width1 = src_batch_width,
+            width2 = tgt_batch_width
         );
         
         // Add line to buffer
@@ -340,9 +345,12 @@ impl ListOfNSL {
             return;
         }
         
+        // Use 6-digit batch numbers for sizes >= 11
+        let batch_width = if self.current_size >= 11 { 6 } else { 4 };
         let filename = format!(
-            "{}/no_set_list_input_intermediate_count_{:02}_{:04}.txt",
-            self.output_path, self.current_size, self.current_file_batch
+            "{}/no_set_list_input_intermediate_count_{:02}_{:0width$}.txt",
+            self.output_path, self.current_size, self.current_file_batch,
+            width = batch_width
         );
         
         // Write all buffered lines at once
@@ -497,9 +505,11 @@ impl ListOfNSL {
                 self.process_one_file_of_current_size_n(max);
                 
                 // Write buffered input-intermediary file in one operation
+                let batch_width = if self.current_size >= 11 { 6 } else { 4 };
                 let intermediary_filename = format!(
-                    "no_set_list_input_intermediate_count_{:02}_{:04}.txt",
-                    self.current_size, self.current_file_batch
+                    "no_set_list_input_intermediate_count_{:02}_{:0width$}.txt",
+                    self.current_size, self.current_file_batch,
+                    width = batch_width
                 );
                 self.write_input_intermediary_file();
                 test_print(&format!("   ... saving input intermediary file {}", intermediary_filename));
@@ -707,9 +717,12 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
     let mut batches_to_skip = Vec::new();
     
     for (src_batch, files) in &files_by_source_batch {
+        // Use 6-digit batch numbers for sizes >= 11
+        let batch_width = if target_size - 1 >= 11 { 6 } else { 4 };
         let input_intermediary_file = format!(
-            "{}/no_set_list_input_intermediate_count_{:02}_{:04}.txt",
-            base_path, target_size - 1, src_batch
+            "{}/no_set_list_input_intermediate_count_{:02}_{:0width$}.txt",
+            base_path, target_size - 1, src_batch,
+            width = batch_width
         );
         
         // Check if input-intermediary file exists and contains all files
@@ -755,25 +768,34 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
             
             if batches_to_skip.contains(src_batch) {
                 // Valid file - just mention it's being skipped
+                let batch_width = if target_size - 1 >= 11 { 6 } else { 4 };
+                let batch_display_width = if target_size - 1 >= 11 { 6 } else { 4 };
                 let intermediary_filename = format!(
-                    "no_set_list_input_intermediate_count_{:02}_{:04}.txt",
-                    target_size - 1, src_batch
+                    "no_set_list_input_intermediate_count_{:02}_{:0width$}.txt",
+                    target_size - 1, src_batch,
+                    width = batch_width
                 );
-                test_print(&format!("   ... Skipping source batch {:04}: {} is valid ({} files)", 
-                    src_batch, intermediary_filename, files.len()));
+                test_print(&format!("   ... Skipping source batch {:0width$}: {} is valid ({} files)",
+                    src_batch, intermediary_filename, files.len(),
+                    width = batch_display_width));
             } else {
                 // Need to create this file
+                let batch_width = if target_size - 1 >= 11 { 6 } else { 4 };
+                let batch_display_width = if target_size - 1 >= 11 { 6 } else { 4 };
                 let input_intermediary_file = format!(
-                    "{}/no_set_list_input_intermediate_count_{:02}_{:04}.txt",
-                    base_path, target_size - 1, src_batch
+                    "{}/no_set_list_input_intermediate_count_{:02}_{:0width$}.txt",
+                    base_path, target_size - 1, src_batch,
+                    width = batch_width
                 );
                 let intermediary_filename = format!(
-                    "no_set_list_input_intermediate_count_{:02}_{:04}.txt",
-                    target_size - 1, src_batch
+                    "no_set_list_input_intermediate_count_{:02}_{:0width$}.txt",
+                    target_size - 1, src_batch,
+                    width = batch_width
                 );
                 
-                test_print(&format!("   ... Creating input-intermediary file for source batch {:04}", 
-                    src_batch));
+                test_print(&format!("   ... Creating input-intermediary file for source batch {:0width$}",
+                    src_batch,
+                    width = batch_display_width));
                 
                 // Buffer all lines first, then write atomically
                 let mut buffer = Vec::new();
@@ -831,17 +853,22 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
     let mut batches_processed = 0usize;
     
     for (batch_idx, chunk) in all_files.chunks(COUNT_BATCH_SIZE).enumerate() {
-        let intermediary_filename = format!("{}/no_set_list_intermediate_count_{:02}_{:04}.txt", 
-            base_path, target_size, batch_idx);
+        // Use 6-digit batch numbers for sizes >= 11
+        let batch_width = if target_size >= 11 { 6 } else { 4 };
+        let intermediary_filename = format!("{}/no_set_list_intermediate_count_{:02}_{:0width$}.txt", 
+            base_path, target_size, batch_idx,
+            width = batch_width);
         
         // Check if output-intermediary file exists and is up-to-date
         if is_intermediary_file_valid(&intermediary_filename, chunk)? {
-            test_print(&format!("\n   ... Batch {:04}/{}: Skipping (output-intermediary file is up-to-date)", 
-                batch_idx, num_batches));
+            test_print(&format!("\n   ... Batch {:0width$}/{}: Skipping (output-intermediary file is up-to-date)", 
+                batch_idx, num_batches,
+                width = batch_width));
             batches_skipped += 1;
         } else {
-            test_print(&format!("\n   ... Batch {:04}/{}: Processing {} files...", 
-                batch_idx, num_batches, chunk.len()));
+            test_print(&format!("\n   ... Batch {:0width$}/{}: Processing {} files...",
+                batch_idx, num_batches, chunk.len(),
+                width = batch_width));
             
             process_count_batch(chunk, &intermediary_filename, target_size)?;
             batches_processed += 1;
@@ -1495,9 +1522,14 @@ fn output_filename(
     target_batch: u32
 ) -> String {
     use std::path::Path;
+    // Use 6-digit batch numbers for sizes >= 11
+    let src_batch_width = if source_size >= 11 { 6 } else { 5 };
+    let tgt_batch_width = if target_size >= 11 { 6 } else { 5 };
     let filename = format!(
-        "nsl_{:02}_batch_{:05}_to_{:02}_batch_{:05}.rkyv",
-        source_size, source_batch, target_size, target_batch
+        "nsl_{:02}_batch_{:0width1$}_to_{:02}_batch_{:0width2$}.rkyv",
+        source_size, source_batch, target_size, target_batch,
+        width1 = src_batch_width,
+        width2 = tgt_batch_width
     );
     let path = Path::new(base_path).join(filename);
     path.to_string_lossy().to_string()
