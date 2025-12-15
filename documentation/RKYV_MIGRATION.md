@@ -37,8 +37,8 @@ cargo run --release
 
 New files will be created as:
 
-- `nlist_03_batch_000.rkyv`
-- `nlist_04_batch_000.rkyv`
+- `nlist_03_batch_000000.rkyv`
+- `nlist_04_batch_000000.rkyv`
 - etc.
 
 ### Option 2: Convert Existing Files
@@ -51,10 +51,10 @@ use funny_set_exploration::list_of_nlists::*;
 
 fn main() {
     // Read old bincode file
-    let nlists = read_from_file_bincode("nlist_06_batch_000.bin").unwrap();
+    let nlists = read_from_file_bincode("nlist_06_batch_000000.bin").unwrap();
     
     // Write as rkyv file
-    save_to_file(&nlists, "nlist_06_batch_000.rkyv");
+    save_to_file(&nlists, "nlist_06_batch_000000.rkyv");
     
     println!("Converted!");
 }

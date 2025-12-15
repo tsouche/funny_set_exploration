@@ -88,13 +88,13 @@ funny_set_exploration/
 
 Generated files follow this naming pattern:
 ```
-nlist_{size:02}_batch_{number:03}.bin
+nlist_{size:02}_batch_{number:06}.bin
 ```
 
 Examples:
 
-- `nlist_03_batch_000.bin` - First batch of 3-card lists
-- `nlist_07_batch_042.bin` - 43rd batch of 7-card lists
+- `nlist_03_batch_000000.bin` - First batch of 3-card lists
+- `nlist_07_batch_000042.bin` - 43rd batch of 7-card lists
 
 Each file is approximately 4GB and contains up to 20 million n-lists.
 

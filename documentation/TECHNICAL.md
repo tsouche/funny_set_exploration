@@ -99,11 +99,11 @@ fn read_from_file(filename: &str) -> Option<Vec<NList>> {
 
 ### File Naming Convention
 
-Pattern: `nlist_{size:02}_batch_{number:03}.bin`
+Pattern: `nlist_{size:02}_batch_{number:06}.bin`
 
 Examples:
-- `nlist_03_batch_000.bin` - First batch of 3-card lists  
-- `nlist_07_batch_042.bin` - 43rd batch of 7-card lists
+- `nlist_03_batch_000000.bin` - First batch of 3-card lists  
+- `nlist_07_batch_000042.bin` - 43rd batch of 7-card lists
 
 ### Path Configuration
 
@@ -337,8 +337,8 @@ Built into processing loop:
 Example output:
 ```
 Start processing files for size 7:
-   ... saved 20,000,001 n-lists to nlist_07_batch_000.bin
-   ... saved 20,000,001 n-lists to nlist_07_batch_001.bin
+   ... saved 20,000,001 n-lists to nlist_07_batch_000000.bin
+   ... saved 20,000,001 n-lists to nlist_07_batch_000001.bin
 ```
 
 ## Build Configuration

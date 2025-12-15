@@ -62,8 +62,8 @@ Implemented three key functions:
 **New format:**
 
 - Extension: `.rkyv` (was `.bin`)
-- Pattern: `nlist_{size:02}_batch_{number:03}.rkyv`
-- Example: `nlist_06_batch_042.rkyv`
+- Pattern: `nlist_{size:02}_batch_{number:06}.rkyv`
+- Example: `nlist_06_batch_000042.rkyv`
 
 **Backward compatible:**
 

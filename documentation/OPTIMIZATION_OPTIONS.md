@@ -134,7 +134,7 @@ fn serialize_compact(list: &Vec<NList>) -> Vec<u8> {
 
 ```bash
 # After generation
-zstd -19 nlist_v2_06_batch_000.rkyv
+zstd -19 nlist_v2_06_batch_000000.rkyv
 # Result: .rkyv.zst files at ~30-40% original size
 ```
 

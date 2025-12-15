@@ -1040,7 +1040,6 @@ mod tests {
     use super::*;
     use std::fs::{self, File};
     use std::io::Write;
-    use std::path::PathBuf;
 
     #[test]
     fn incremental_count_resume() {
@@ -1913,13 +1912,13 @@ fn get_next_output_batch_from_files(
 
 /// Filename helper - single source of truth for all file naming
 /// 
-/// Pattern: nsl_{source_size:02}_batch_{source_batch:05|06}_to_{target_size:02}_batch_{target_batch:05|06}.rkyv
+/// Pattern: nsl_{source_size:02}_batch_{source_batch:06}_to_{target_size:02}_batch_{target_batch:06}.rkyv
 /// 
 /// Examples:
-/// - Seed file: nsl_00_batch_00000_to_03_batch_00000.rkyv (source_size=0, target_size=3)
-/// - Size 4 output: nsl_03_batch_00000_to_04_batch_00000.rkyv (from size 3 to create size 4)
-/// - Size 5 input batch 0: Find files matching *_to_05_batch_00000.rkyv
-/// - Size 11 target example: nsl_10_batch_00000_to_11_batch_000000.rkyv (6-digit target batch)
+/// - Seed file: nsl_00_batch_000000_to_03_batch_000000.rkyv (source_size=0, target_size=3)
+/// - Size 4 output: nsl_03_batch_000000_to_04_batch_000000.rkyv (from size 3 to create size 4)
+/// - Size 5 input batch 0: Find files matching *_to_05_batch_000000.rkyv
+/// - Size 11 target example: nsl_10_batch_000000_to_11_batch_000000.rkyv (6-digit target batch)
 ///
 /// Generate output filename when saving
 /// Uses 6-digit batch numbers for all sizes

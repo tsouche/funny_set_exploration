@@ -113,8 +113,8 @@ If you have a NAS drive mapped to `T:\data\funny_set_exploration` on Windows:
    ```
 
 4. Files will be saved as:
-   - `T:\data\funny_set_exploration\nlist_03_batch_000.bin`
-   - `T:\data\funny_set_exploration\nlist_04_batch_000.bin`
+   - `T:\data\funny_set_exploration\nlist_03_batch_000000.bin`
+   - `T:\data\funny_set_exploration\nlist_04_batch_000000.bin`
    - etc.
 
 ## File Naming Convention
@@ -122,14 +122,14 @@ If you have a NAS drive mapped to `T:\data\funny_set_exploration` on Windows:
 Files are automatically named using this pattern:
 
 ```
-nlist_{size:02}_batch_{number:03}.bin
+nlist_{size:02}_batch_{number:06}.bin
 ```
 
 Examples:
 
-- `nlist_03_batch_000.bin` - First batch of 3-card lists
-- `nlist_04_batch_000.bin` - First batch of 4-card lists
-- `nlist_06_batch_042.bin` - 43rd batch of 6-card lists
+- `nlist_03_batch_000000.bin` - First batch of 3-card lists
+- `nlist_04_batch_000000.bin` - First batch of 4-card lists
+- `nlist_06_batch_000042.bin` - 43rd batch of 6-card lists
 
 ## Troubleshooting
 

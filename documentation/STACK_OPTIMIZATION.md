@@ -226,8 +226,8 @@ cargo run --release
 ```
 
 Files will be saved as:
-- `nlist_03_batch_000.nsl` (new format)
-- `nlist_04_batch_000.nsl`
+- `nlist_03_batch_000000.nsl` (new format)
+- `nlist_04_batch_000000.nsl`
 - etc.
 
 **Step 5: Update CLI (if using)**

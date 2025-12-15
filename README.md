@@ -145,13 +145,13 @@ Options:
 
 ### Output Files
 
-Files are named: `nlist_{size:02}_batch_{batch:03}.rkyv`
+Files are named: `nlist_{size:02}_batch_{batch:06}.rkyv`
 
 Examples:
 
-- `nlist_05_batch_000.rkyv` - First batch of 5-card lists (~2GB)
-- `nlist_06_batch_000.rkyv` - First batch of 6-card lists (~2GB)
-- `nlist_07_batch_059.rkyv` - 60th batch of 7-card lists
+- `nlist_05_batch_000000.rkyv` - First batch of 5-card lists (~1GB)
+- `nlist_06_batch_000000.rkyv` - First batch of 6-card lists (~1GB)
+- `nlist_07_batch_000059.rkyv` - 60th batch of 7-card lists
 
 ## Architecture
 
@@ -310,9 +310,9 @@ nsl_{source_size:02}_batch_{source_batch:06}_to_{target_size:02}_batch_{target_b
 
 Examples:
 
-- `nsl_03_batch_00000_to_04_batch_00000.rkyv` - From size 3 batch 0 to size 4 batch 0
-- `nsl_05_batch_00001_to_06_batch_00012.rkyv` - From size 5 batch 1 to size 6 batch 12
-- `nsl_10_batch_00000_to_11_batch_000000.rkyv` - Size 11 target uses 6-digit batch numbers
+- `nsl_03_batch_000000_to_04_batch_000000.rkyv` - From size 3 batch 0 to size 4 batch 0
+- `nsl_05_batch_000001_to_06_batch_000012.rkyv` - From size 5 batch 1 to size 6 batch 12
+- `nsl_10_batch_000000_to_11_batch_000000.rkyv` - Size 11 target uses 6-digit batch numbers
 
 ### Performance Characteristics
 
