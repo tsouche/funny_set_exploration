@@ -19,6 +19,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::io::stdout;
 
 // turn this constant to 'true' to print multiple debug messages
 static DEBUG_FLAG: AtomicBool = AtomicBool::new(true);
@@ -88,9 +89,17 @@ pub fn debug_print(msg:&str) {
 
 pub fn test_print(msg:&str) {
 	if TEST_FLAG.load(Ordering::Relaxed) {
-        eprintln!("{}", msg.to_string());
+		eprintln!("{}", msg.to_string());
 	}
 	// Always write to log file if it's open
+	write_to_log(msg);
+}
+
+/// Progress output intended for interactive display during long-running operations.
+/// Prints to stdout and flushes so progress is visible even if stderr/stdout is redirected.
+pub fn progress_print(msg: &str) {
+	println!("{}", msg);
+	let _ = stdout().flush();
 	write_to_log(msg);
 }
 

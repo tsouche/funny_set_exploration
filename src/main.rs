@@ -61,7 +61,7 @@ struct Args {
     ///   --restart 5 2   Load size 5 batch 2, continue through size 18
     ///   --restart 7 0   Load size 7 batch 0, continue through size 18
     /// 
-    /// By default, reads baseline from count file (no_set_list_count_XX.txt)
+    /// By default, reads baseline from count file (nsl_{output_size:02}_global_count.txt)
     /// Use --force to regenerate count file by scanning all files.
     #[arg(long, num_args = 2, value_names = ["SIZE", "BATCH"], conflicts_with_all = ["size", "count", "unitary"])]
     restart: Option<Vec<u32>>,
@@ -80,17 +80,24 @@ struct Args {
     #[arg(long, num_args = 2, value_names = ["SIZE", "BATCH"], conflicts_with_all = ["size", "count", "restart"])]
     unitary: Option<Vec<u32>>,
 
-    /// Force regeneration of count file when using --restart or --unitary
+    /// Force regeneration of count file (affects --count, --restart and --unitary)
     /// 
-    /// By default, restart/unitary modes read existing count file.
+    /// By default, restart/unitary modes and --count read existing count file.
     /// This flag forces a full file scan to regenerate it first.
     #[arg(long)]
     force: bool,
 
+    /// Keep partial and processed state files after a successful run
+    ///
+    /// By default these files are removed when the run completes successfully.
+    /// Use this flag to preserve them for debugging or incremental inspection.
+    #[arg(long)]
+    keep_state: bool,
+
     /// Count existing files for a specific size and create summary report
     /// 
     /// Examples:
-    ///   --count 6   Count all size 6 files, create no_set_list_count_06.txt
+    ///   --count 6   Count all size 6 files, create nsl_06_global_count.txt
     /// 
     /// Scans all files, counts lists, creates summary report
     /// without processing any new lists
@@ -102,14 +109,14 @@ struct Args {
     /// SIZE refers to OUTPUT size to compact. Reads all files for this size,
     /// consolidates into 10M-entry batches, replaces original files.
     /// 
-    /// New filename: nsl_compacted_{size:02}_batch_{batch:05}_from_{src:05}.rkyv
+    /// New filename: nsl_{size:02}c_batch_{batch:05}_from_{src:05}.rkyv
     /// 
     /// Examples:
     ///   --compact 8   Compact all size 8 files into 10M-entry batches
     ///   --compact 12  Compact all size 12 files into 10M-entry batches
     /// 
     /// Use when later processing creates many small files (ratio < 1.0).
-    /// Original files are deleted after successful compaction.
+    /// Original files are preserved; compaction writes new files with a 'c' suffix.
     #[arg(long, conflicts_with_all = ["size", "restart", "unitary", "count", "check"])]
     compact: Option<u8>,
 
@@ -206,6 +213,7 @@ struct ProcessingConfig {
     output_dir: String,
     max_lists_per_file: u64,
     force_recount: bool,
+    keep_state: bool,
 }
 
 /// Processing mode enumeration
@@ -287,6 +295,7 @@ fn handle_force_recount(
     enabled: bool,
     directory: &str,
     target_size: u8
+    , keep_state: bool
 ) -> Result<(), String> {
     if !enabled {
         return Ok(());
@@ -295,7 +304,7 @@ fn handle_force_recount(
     use crate::list_of_nsl::count_size_files;
     
     test_print(&format!("\nFORCE MODE: Regenerating count file for size {}...", target_size));
-    count_size_files(directory, target_size)
+    count_size_files(directory, target_size, true, keep_state)
         .map_err(|e| format!("Error regenerating count file: {}", e))?;
     test_print("Count file regenerated successfully\n");
     Ok(())
@@ -355,6 +364,7 @@ fn build_config(args: &Args, max_per_file: u64) -> Result<ProcessingConfig, Stri
         output_dir,
         max_lists_per_file: max_per_file,
         force_recount: args.force,
+        keep_state: args.keep_state,
     })
 }
 
@@ -365,7 +375,7 @@ fn execute_mode(config: &ProcessingConfig) -> Result<String, String> {
     match &config.mode {
         ProcessingMode::Count { size } => {
             // Banner is printed by count_size_files function
-            count_size_files(&config.input_dir, *size)
+            count_size_files(&config.input_dir, *size, config.force_recount, config.keep_state)
                 .map_err(|e| format!("Error during count: {}", e))?;
             Ok("Count completed successfully".to_string())
         },
@@ -411,7 +421,7 @@ fn execute_restart_mode(config: &ProcessingConfig, restart_size: u8, restart_bat
     test_print(&format!("Batch size: {} entries/file (~1GB, compact)", config.max_lists_per_file.separated_string()));
     print_directories(&config.input_dir, &config.output_dir);
     
-    handle_force_recount(config.force_recount, &config.output_dir, restart_size + 1)?;
+    handle_force_recount(config.force_recount, &config.output_dir, restart_size + 1, config.keep_state)?;
     test_print("\n======================\n");
 
     let mut no_set_lists = ListOfNSL::with_paths(&config.input_dir, &config.output_dir);
@@ -443,7 +453,7 @@ fn execute_unitary_mode(config: &ProcessingConfig, unitary_size: u8, unitary_bat
     test_print(&format!("Batch size: {} entries/file (~1GB, compact)", config.max_lists_per_file.separated_string()));
     print_directories(&config.input_dir, &config.output_dir);
     
-    handle_force_recount(config.force_recount, &config.output_dir, unitary_size + 1)?;
+    handle_force_recount(config.force_recount, &config.output_dir, unitary_size + 1, config.keep_state)?;
     test_print("\n======================\n");
 
     let mut no_set_lists = ListOfNSL::with_paths(&config.input_dir, &config.output_dir);

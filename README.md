@@ -14,7 +14,8 @@ A Rust-based exhaustive search algorithm to find all combinations of 12, 15, and
 - Enhanced count mode leveraging input-intermediary files for faster processing
 - Repository integrity checking (missing batches/files detection)
 - Human-readable intermediary files with atomic writes for reliability
-- 5-digit batch numbering for scalability
+ - Human-readable intermediary files with atomic writes for reliability
+ - 6-digit batch numbering for scalability
 - Continuous batch numbering across source files
 
 **Architecture:** Hybrid stack/heap implementation
@@ -112,21 +113,24 @@ Options:
 
       --count <SIZE>
           Count existing files for target size, create summary report
-          Creates no_set_list_count_XX.txt without processing new lists
+          Creates nsl_{output_size:02}_global_count.txt without processing new lists
 
       --check <SIZE>
           Check repository integrity for target size
           Validates batch sequence, consolidated count file, and intermediary files
           Reports missing batches and files with [OK]/[!!] indicators
 
-      --compact <SIZE>
+        --compact <SIZE>
           Compact small output files into larger 10M-entry batches
-          SIZE refers to OUTPUT size. Consolidates files and replaces originals.
-          New format: nsl_compacted_{size}_batch_{batch}_from_{first_source}.rkyv
+          SIZE refers to OUTPUT size. Consolidates files and writes new compacted files (originals preserved).
+          New format: nsl_{size}c_batch_{batch}_from_{first_source}.rkyv (note the 'c' suffix after the size)
           Use when later processing waves create many small files.
+          Intermediary count files (input-intermediary) now use the pattern:
+            nsl_{output_size:02}_intermediate_count_from_{input_size:02}_{input_batch:06}.txt
+          Use the script `scripts/rename_intermediary_counts.ps1` to migrate existing intermediary files to the new naming scheme.
 
       --force
-          Force regeneration of count file (use with --restart or --unitary)
+          Force regeneration of count file (use with --count, --restart, or --unitary)
 
   -o, --output-path <OUTPUT_PATH>
           Output directory path (optional)
@@ -298,14 +302,10 @@ pub struct ListOfNlist {
 
 ### File Format
 
-Output files use rkyv zero-copy serialization with modular naming, where the batch fields can be either 5-digit or 6-digit zero-padded widths:
+Output files use rkyv zero-copy serialization with modular naming; batch fields are 6-digit zero-padded:
 
 ```bash
-nsl_{source_size:02}_batch_{source_batch:05|06}_to_{target_size:02}_batch_{target_batch:05|06}.rkyv
-
-- Source and target batch fields use either 5-digit or 6-digit zero-padded widths depending on size:
-  - **5 digits** for sizes < 11 (e.g., `00000`)
-  - **6 digits** for sizes >= 11 (e.g., `000000`)
+nsl_{source_size:02}_batch_{source_batch:06}_to_{target_size:02}_batch_{target_batch:06}.rkyv
 ```
 
 Examples:

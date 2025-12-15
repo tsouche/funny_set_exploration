@@ -9,40 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Batch number format**: Extended to 6 digits for sizes >= 11
-  - Output files: Use 6-digit batch numbers when target_size >= 11
-  - Input files: Use 6-digit batch numbers when source_size >= 11
-  - Input-intermediary files: Use 6-digit batch numbers when size >= 11
-  - Output-intermediary files: Use 6-digit batch numbers when target_size >= 11
-  - Accommodates expected file counts: ~21,550 for size 10, ~85,000 for size 11+
-  - Format: `{:06}` for 6-digit vs. `{:05}` for 5-digit batch numbers
-  - Applies consistently across all file naming and display messages
+- **Batch number format**: Enforce 6 digits for all sizes
+- Output files: Use 6-digit batch numbers for all targets
+- Input files and intermediary files: Use 6-digit batch numbers for all sizes
+- Applies consistently across all file naming and display messages
 
 - **Count mode behavior**: `--count` now reads existing input-intermediary files (if present) to build the global count report and does not create/update these small files; ensure intermediary files exist for accurate counts.
+- **Removed**: Output-intermediary files are no longer created or used; `--count` relies only on input-intermediary files.
 
 ### Technical Details
 
-**Batch Format Threshold:**
+**Batch Format:**
 
-- **Output filenames**: 6 digits when target_size >= 11
-  - Example: `nsl_10_batch_00042_to_11_batch_012345.rkyv`
-- **Input-intermediary**: 6 digits when size >= 11  
-  - Example: `no_set_list_input_intermediate_count_11_012345.txt`
-- **Output-intermediary**: 6 digits when target_size >= 11
-  - Example: `no_set_list_intermediate_count_11_012345.txt`
-- **Backward compatible**: Files for sizes < 11 continue using 5-digit format
+- **Filenames**: Batch fields use 6 digits across the board.
+  - Example: `nsl_10_batch_000042_to_11_batch_012345.rkyv`
+  - Input-intermediary example: `nsl_12_intermediate_count_from_11_000123.txt`
 
 ## [0.4.6] - 2025-12-13
 
 ### Added
 
 - **Input-intermediary file generation**: Automatic tracking of output files created from each input batch
-  - New file format: `no_set_list_input_intermediate_count_{size:02}_{input_batch:04}.txt`
-  - Generated automatically during `--size`, `--restart`, and `--unitary` modes
-  - Contains one line per output file created from the input batch
-  - Format: `... {count:>8} lists in {output_filename}`
-  - Enables precise tracking of which output files were generated from which input batches
-  - Improves restart capability and repository integrity verification
+- New file format: `nsl_{output_size:02}_intermediate_count_{input_size:02}_{input_batch:06}.txt`
+- Generated automatically during `--size`, `--restart`, and `--unitary` modes
+- Contains one line per output file created from the input batch
+- Format: `... {count:>8} lists in {output_filename}`
+- Enables precise tracking of which output files were generated from which input batches
+- Improves restart capability and repository integrity verification
 
 - **Enhanced count mode**: Leverages input-intermediary files for efficiency
   - First checks for existing input-intermediary files before reading .rkyv files
@@ -73,7 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Purpose**: Track which output batches were created from each input batch
 - **Location**: Stored in output directory alongside output files
-- **Naming**: `no_set_list_input_intermediate_count_{source_size:02}_{source_batch:04}.txt`
+- **Naming**: `nsl_{output_size:02}_intermediate_count_{input_size:02}_{input_batch:04}.txt`
 - **Content**: One line per output file, sorted by output batch number
 - **Validation**: Count mode verifies file completeness (line count matches output file count)
 - **Recovery**: Missing or incomplete files automatically recreated by count mode
@@ -237,7 +230,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Count mode**: New `--count <SIZE>` command to count existing files without processing
   - Scans all output files for a given target size
   - Counts lists in each file
-  - Creates summary report: `no_set_list_count_XX.txt`
+  - Creates summary report: `nsl_{size:02}_global_count.txt`
   - Report format: source_batch, target_batch, cumulative_nb_lists, nb_lists_in_file, filename
   - Files listed in descending batch order (highest first)
   - Useful for verifying counts and tracking progress

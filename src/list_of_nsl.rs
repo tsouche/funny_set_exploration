@@ -227,9 +227,9 @@ impl ListOfNSL {
         let filename = match find_input_filename(&self.input_path, self.current_size, self.current_file_batch) {
             Some(f) => f,
             None => {
-                debug_print(&format!("   ... No input file found for size {:02} batch {:05} in {}",
+                debug_print(&format!("   ... No input file found for size {:02} batch {:06} in {}",
                     self.current_size, self.current_file_batch, self.input_path));
-                debug_print(&format!("refill_current_from_file: No file found for size {:02} batch {:05}",
+                debug_print(&format!("refill_current_from_file: No file found for size {:02} batch {:06}",
                     self.current_size, self.current_file_batch));
                 return false;
             }
@@ -321,9 +321,9 @@ impl ListOfNSL {
     /// Records each output batch created from the current input batch
     fn buffer_input_intermediary_line(&mut self, output_batch: u32, output_count: u64) {
         // Generate the output filename for this batch
-        // Use 6-digit batch numbers for sizes >= 11
-        let src_batch_width = if self.current_size >= 11 { 6 } else { 5 };
-        let tgt_batch_width = if self.current_size + 1 >= 11 { 6 } else { 5 };
+        // Use 6-digit batch numbers (always)
+        let src_batch_width = 6;
+        let tgt_batch_width = 6;
         let output_filename = format!(
             "nsl_{:02}_batch_{:0width1$}_to_{:02}_batch_{:0width2$}.rkyv",
             self.current_size,
@@ -345,11 +345,12 @@ impl ListOfNSL {
             return;
         }
         
-        // Use 6-digit batch numbers for sizes >= 11
-        let batch_width = if self.current_size >= 11 { 6 } else { 4 };
+        // Use 6-digit batch numbers (always)
+        let batch_width = 6;
+        let target_size = self.current_size + 1;
         let filename = format!(
-            "{}/no_set_list_input_intermediate_count_{:02}_{:0width$}.txt",
-            self.output_path, self.current_size, self.current_file_batch,
+            "{}/nsl_{:02}_intermediate_count_from_{:02}_{:0width$}.txt",
+            self.output_path, target_size, self.current_size, self.current_file_batch,
             width = batch_width
         );
         
@@ -433,7 +434,7 @@ impl ListOfNSL {
         
         // Calculate and log this file's statistics
         let file_new_total = self.new_total_list_count - file_new_count_start;
-        debug_print(&format!("   ... processed {} input lists, created {} new lists from batch {:05}",
+        debug_print(&format!("   ... processed {} input lists, created {} new lists from batch {:06}",
             self.current_file_list_count.separated_string(),
             file_new_total.separated_string(),
             self.current_file_batch));
@@ -505,7 +506,7 @@ impl ListOfNSL {
                 self.process_one_file_of_current_size_n(max);
                 
                 // Write buffered input-intermediary file in one operation
-                let batch_width = if self.current_size >= 11 { 6 } else { 4 };
+                let batch_width = 6;
                 let intermediary_filename = format!(
                     "no_set_list_input_intermediate_count_{:02}_{:0width$}.txt",
                     self.current_size, self.current_file_batch,
@@ -604,7 +605,7 @@ impl ListOfNSL {
             return 0;
         }
         
-        debug_print(&format!("process_single_batch: processing input size {:02} batch {:05}", 
+        debug_print(&format!("process_single_batch: processing input size {:02} batch {:06}", 
             input_size, input_batch));
         
         let start_time = std::time::Instant::now();
@@ -613,18 +614,18 @@ impl ListOfNSL {
         self.init_processing_state(input_size, input_batch);
         self.init_output_batch(input_batch);  // Scan for next available output batch
         
-        test_print(&format!("   ... will create output starting from batch {:05}", self.new_output_batch));
+        test_print(&format!("   ... will create output starting from batch {:06}", self.new_output_batch));
         
         // Process only this one batch
         let batches_processed = self.process_batch_loop(max, true);
         
         if batches_processed == 0 {
-            test_print(&format!("   ... ERROR: Could not load input file for size {:02} batch {:05}",
+            test_print(&format!("   ... ERROR: Could not load input file for size {:02} batch {:06}",
                 input_size, input_batch));
             return 0;
         }
         
-        debug_print(&format!("process_single_batch: Finished processing size {:02} batch {:05}", 
+        debug_print(&format!("process_single_batch: Finished processing size {:02} batch {:06}", 
             input_size, input_batch));
         
         // Report results (slightly different format for unitary)
@@ -649,29 +650,25 @@ const COUNT_BATCH_SIZE: usize = 10;
 
 /// Count files for a given target size and create summary report
 /// 
-/// This function uses a two-tier intermediary file system:
-/// 1. Input-intermediary files: no_set_list_input_intermediate_count_{size:02}_{input_batch:04}.txt
-///    - Created automatically during file generation (--size, --restart, --unitary modes)
-///    - One file per input batch, tracks which files were read
-/// 2. Output-intermediary files: no_set_list_intermediate_count_{target_size:02}_{batch_idx:04}.txt
-///    - Created by --count mode by aggregating input-intermediary files
-///    - Used to consolidate into final report
+/// This function uses an input-intermediary file system:
+/// 1. Input-intermediary files: nsl_{target_size:02}_intermediate_count_from_{input_size:02}_{input_batch:06}.txt
+///    - Created automatically during file generation (--size, --restart, --unitary modes and --compact)
+///    - One file per input batch, tracks which output files include lists from that input batch
 /// 
 /// File naming:
-/// - Input-intermediary: no_set_list_input_intermediate_count_{size:02}_{input_batch:04}.txt
-/// - Output-intermediary: no_set_list_intermediate_count_{target_size:02}_{batch_idx:04}.txt
-/// - Final report: no_set_list_count_{target_size:02}.txt
+/// - Input-intermediary: nsl_{target_size:02}_intermediate_count_from_{input_size:02}_{input_batch:06}.txt
+/// - Final report: nsl_{target_size:02}_global_count.txt
 /// 
 /// All files are stored in the same directory as the source files (base_path)
-pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()> {
+pub fn count_size_files(base_path: &str, target_size: u8, force: bool, keep_state: bool) -> std::io::Result<()> {
     use std::fs;
     use std::path::PathBuf;
     
     test_print(&format!("\nCounting files for size {:02}...", target_size));
     test_print(&format!("   Input directory: {}", base_path));
     // Count mode: reads existing input-intermediary files named
-    // `no_set_list_input_intermediate_count_{size:02}_{input_batch:06}.txt` (or 5-digit when size < 11)
-    // and consolidates them into the final `no_set_list_count_{size:02}.txt` report.
+    // `nsl_{target_size:02}_intermediate_count_from_{source_size:02}_{input_batch:06}.txt`
+    // and consolidates them into the final `nsl_{size:02}_global_count.txt` report.
     // It no longer creates or updates these small intermediary files; they must be present.
     
     let start_time = std::time::Instant::now();
@@ -695,45 +692,170 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
     let mut intermediary_files: Vec<String> = Vec::new();
     let mut all_file_info: BTreeMap<(u32, u32), (String, u64)> = BTreeMap::new();
 
-    // Find all input-intermediary files for the previous size (target_size-1)
-    let batch_width = if target_size - 1 >= 11 { 6 } else { 4 };
-    let pattern = format!("no_set_list_input_intermediate_count_{:02}_", target_size - 1);
+    // Find all input-intermediary files for this target size: nsl_{target}_intermediate_count_from_{source}_*.txt
+    // Also accept legacy 'no_set_list_input_intermediate_count_{source}_*.txt' for robustness
+    let pattern_new = format!("nsl_{:02}_intermediate_count_from_{:02}_", target_size, target_size - 1);
+    let legacy_pattern = format!("no_set_list_input_intermediate_count_{:02}_", target_size - 1);
     let entries = fs::read_dir(base_path)?;
     for entry in entries.flatten() {
         if let Some(name) = entry.file_name().to_str() {
-            if name.starts_with(&pattern) && name.ends_with(".txt") {
+            if (name.starts_with(&pattern_new) || name.starts_with(&legacy_pattern)) && name.ends_with(".txt") {
                 intermediary_files.push(format!("{}/{}", base_path, name));
             }
         }
     }
     intermediary_files.sort();
 
-    test_print(&format!("   ... Found {} intermediary input count files", intermediary_files.len()));
+    progress_print(&format!("   ... Found {} intermediary input count files", intermediary_files.len()));
 
-    // Step 3: Read all intermediary input count files and collect counts
-    use std::io::{BufRead, BufReader};
+    // If no intermediary files found, create them by grouping .rkyv files by source_batch
+    if intermediary_files.is_empty() {
+        test_print(&format!("   ... No intermediary input count files; creating from {} .rkyv files", all_files.len()));
+        use std::collections::BTreeMap;
+        let mut groups: BTreeMap<u32, Vec<std::path::PathBuf>> = BTreeMap::new();
+        let source_size = target_size - 1;
+        for path in &all_files {
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if let Some(to_pos) = name.find("_to_") {
+                    let before_to = &name[..to_pos];
+                    if let Some(src_batch_pos) = before_to.rfind("_batch_") {
+                        let src_batch_str = &before_to[src_batch_pos + 7..];
+                        if let Ok(src_batch) = src_batch_str.parse::<u32>() {
+                            groups.entry(src_batch).or_default().push(path.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        for (src_batch, files) in groups {
+            let inter_filename = format!("{}/nsl_{:02}_intermediate_count_from_{:02}_{:06}.txt", base_path, target_size, source_size, src_batch);
+            if std::path::Path::new(&inter_filename).exists() {
+                match is_intermediary_file_valid(&inter_filename, &files) {
+                    Ok(true) => {
+                        intermediary_files.push(inter_filename);
+                        continue;
+                    }
+                    Ok(false) => {
+                        test_print(&format!("   ... Found stale intermediary {} - recreating", inter_filename));
+                        let _ = std::fs::remove_file(&inter_filename);
+                    }
+                    Err(e) => {
+                        debug_print(&format!("   ... Error validating intermediary {}: {} - recreating", inter_filename, e));
+                        let _ = std::fs::remove_file(&inter_filename);
+                    }
+                }
+            }
+
+            test_print(&format!("   ... creating intermediary file {}", inter_filename));
+            // Create file by counting each file's lists
+            match create_input_intermediary_from_files(&files, &inter_filename) {
+                Ok(_) => intermediary_files.push(inter_filename),
+                Err(e) => debug_print(&format!("   ... Error creating {}: {}", inter_filename, e)),
+            }
+        }
+        test_print(&format!("   ... Created {} intermediary input count files", intermediary_files.len()));
+    }
+
+    // Step 3: Read intermediary input count files incrementally and collect counts
+    // Incremental behavior:
+    // - Maintain a partial entries file and a processed-batches file so the count run can resume
+    // - Show batch-number progress as we read intermediary files (up to 10 per line)
+    use std::io::{BufRead, BufReader, Write};
+
+    let partial_filename = format!("{}/nsl_{:02}_global_count.partial", base_path, target_size);
+    let processed_filename = format!("{}/nsl_{:02}_global_count.processed", base_path, target_size);
+
+    // If force is requested, remove any existing partial/processed state so we rebuild from scratch
+    if force {
+        test_print(&format!("   ... FORCE: discarding previous partial/processed state"));
+        let _ = std::fs::remove_file(&partial_filename);
+        let _ = std::fs::remove_file(&processed_filename);
+    }
+
+    // Load processed batches from processed file (if present)
+    let mut processed_batches: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+    if std::path::Path::new(&processed_filename).exists() {
+        if let Ok(contents) = std::fs::read_to_string(&processed_filename) {
+            for line in contents.lines() {
+                if let Ok(n) = line.trim().parse::<u32>() {
+                    processed_batches.insert(n);
+                }
+            }
+        }
+    }
+
+    // If force is enabled, ignore previously processed batches; otherwise attempt to seed from existing report
+    if force {
+        processed_batches.clear();
+    } else {
+        // Try to parse existing consolidated report for source batches (if any)
+        let report_path = format!("{}/nsl_{:02}_global_count.txt", base_path, target_size);
+        if std::path::Path::new(&report_path).exists() {
+            if let Ok(contents) = std::fs::read_to_string(&report_path) {
+                for line in contents.lines() {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        if let Ok(src) = parts[0].parse::<u32>() {
+                            processed_batches.insert(src);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Open partial and processed files for appending
+    let mut partial_file = std::fs::OpenOptions::new().create(true).append(true).open(&partial_filename)?;
+    let mut processed_file = std::fs::OpenOptions::new().create(true).append(true).open(&processed_filename)?;
+
+    // Helper to display processed batches in compact groups (10 per line)
+    let mut display_buffer: Vec<String> = Vec::new();
+
     for intermediary_file in &intermediary_files {
-        let file = fs::File::open(intermediary_file)?;
-        let reader = BufReader::new(file);
-        for line in reader.lines() {
-            let line = line?;
-            // Format: "   ... count lists in filename"
-            if line.trim().starts_with("...") {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 5 {
-                    if let Ok(count) = parts[1].parse::<u64>() {
-                        let filename = parts[4];
-                        // Parse source and target batch numbers from filename
-                        if let Some(to_pos) = filename.find("_to_") {
-                            let before_to = &filename[..to_pos];
-                            let after_to = &filename[to_pos + 4..];
-                            if let Some(src_batch_pos) = before_to.rfind("_batch_") {
-                                let src_batch_str = &before_to[src_batch_pos + 7..];
-                                if let Ok(src_batch) = src_batch_str.parse::<u32>() {
-                                    if let Some(tgt_batch_pos) = after_to.rfind("_batch_") {
-                                        let tgt_batch_str = &after_to[tgt_batch_pos + 7..after_to.len() - 5]; // -5 for ".rkyv"
-                                        if let Ok(tgt_batch) = tgt_batch_str.parse::<u32>() {
-                                            all_file_info.insert((src_batch, tgt_batch), (filename.to_string(), count));
+        // Extract source batch number from intermediary filename (nsl_{tgt}_intermediate_count_from_{src}_{src_batch:06}.txt)
+        let src_batch_opt = intermediary_file.rsplit('_').nth(0)
+            .and_then(|s| s.strip_suffix(".txt"))
+            .and_then(|s| s.parse::<u32>().ok());
+
+        if let Some(src_batch) = src_batch_opt {
+            if processed_batches.contains(&src_batch) {
+                progress_print(&format!("   ... SKIPPING already-processed batch {:06}", src_batch));
+                continue;
+            }
+
+            // show progress
+            display_buffer.push(format!("{:06}", src_batch));
+            if display_buffer.len() >= COUNT_BATCH_SIZE {
+                progress_print(&format!("   ... reading batches: {}", display_buffer.join(" ")));
+                display_buffer.clear();
+            }
+
+            // Read intermediary file and append its entries to partial file and in-memory map
+            let file = fs::File::open(intermediary_file)?;
+            let reader = BufReader::new(file);
+            for line in reader.lines() {
+                let line = line?;
+                if line.trim().starts_with("...") {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 5 {
+                        if let Ok(count) = parts[1].parse::<u64>() {
+                            let filename = parts[4];
+                            // Parse source and target batch numbers from filename
+                            if let Some(to_pos) = filename.find("_to_") {
+                                let before_to = &filename[..to_pos];
+                                let after_to = &filename[to_pos + 4..];
+                                if let Some(src_batch_pos) = before_to.rfind("_batch_") {
+                                    let src_batch_str = &before_to[src_batch_pos + 7..];
+                                    if let Ok(srcb) = src_batch_str.parse::<u32>() {
+                                        if let Some(tgt_batch_pos) = after_to.rfind("_batch_") {
+                                            let tgt_batch_str = &after_to[tgt_batch_pos + 7..after_to.len() - 5]; // -5 for ".rkyv"
+                                            if let Ok(tgtb) = tgt_batch_str.parse::<u32>() {
+                                                // Insert into in-memory map
+                                                all_file_info.insert((srcb, tgtb), (filename.to_string(), count));
+                                                // Append to partial file as CSV: src,tgt,count,filename
+                                                writeln!(partial_file, "{},{},{},{}", srcb, tgtb, count, filename)?;
+                                            }
                                         }
                                     }
                                 }
@@ -742,19 +864,56 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
                     }
                 }
             }
+
+            // Mark this source batch as processed
+            writeln!(processed_file, "{}", src_batch)?;
+            processed_batches.insert(src_batch);
+
+            // Update a lightweight progress view in the global report so the run is observable and idempotent
+            let _report_path = format!("{}/nsl_{:02}_global_count.txt", base_path, target_size);
+            let _tmp = format!("{}/.nsl_{:02}_global_count.tmp", base_path, target_size);
+            // Regenerate the consolidated global report from the partial CSV so it reflects progress
+            let _ = regenerate_report_from_partial(base_path, target_size as u8, &partial_filename, intermediary_files.len());
+        } else {
+            // fallback: if we couldn't parse batch, still read file but don't mark processed
+            let file = fs::File::open(intermediary_file)?;
+            let reader = BufReader::new(file);
+            for line in reader.lines() {
+                let _ = line?;
+            }
         }
     }
 
+    // Flush any remaining display buffer
+    if !display_buffer.is_empty() {
+        progress_print(&format!("   ... reading batches: {}", display_buffer.join(" ")));
+    }
+
+    // If no entries were collected, we're done
     if all_file_info.is_empty() {
         test_print(&format!("   ... No files found for size {:02}", target_size));
+        // Cleanup partial/processed state by default unless caller requested to keep state
+        if !keep_state {
+            let partial_filename = format!("{}/nsl_{:02}_global_count.partial", base_path, target_size);
+            let processed_filename = format!("{}/nsl_{:02}_global_count.processed", base_path, target_size);
+            match std::fs::remove_file(&partial_filename) {
+                Ok(_) => test_print(&format!("   Removed {}", partial_filename)),
+                Err(e) => test_print(&format!("   [WARN] Could not remove {}: {}", partial_filename, e)),
+            }
+            match std::fs::remove_file(&processed_filename) {
+                Ok(_) => test_print(&format!("   Removed {}", processed_filename)),
+                Err(e) => test_print(&format!("   [WARN] Could not remove {}: {}", processed_filename, e)),
+            }
+        } else {
+            debug_print(&format!("   Keeping partial/processed state for size {:02}", target_size));
+        }
         return Ok(());
     }
 
     // Write the global count file using the same logic as consolidate_count_files
     test_print(&format!("\n   ... Consolidating {} intermediary input count files...", intermediary_files.len()));
-    let report_filename = format!("{}/no_set_list_count_{:02}.txt", base_path, target_size);
+    let report_filename = format!("{}/nsl_{:02}_global_count.txt", base_path, target_size);
     let mut report_file = std::fs::File::create(&report_filename)?;
-    use std::io::Write;
     writeln!(report_file, "# File Count Summary for no-set-{:02} lists", target_size)?;
     writeln!(report_file, "# Generated: {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"))?;
     writeln!(report_file, "# Input directory: {}", base_path)?;
@@ -773,7 +932,7 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
     for ((source_batch, target_batch), (filename, count)) in sorted_files.iter() {
         cumulative += count;
         report_lines.push(format!(
-            "{:05} {:05} | {:>15} | {:>15} | {}",
+            "{:06} {:06} | {:>15} | {:>15} | {}",
             source_batch,
             target_batch,
             cumulative.separated_string(),
@@ -792,6 +951,22 @@ pub fn count_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
     debug_print(&format!("   Total lists: {}", cumulative.separated_string()));
     let elapsed = start_time.elapsed().as_secs_f64();
     test_print(&format!("\nCount completed in {:.2} seconds", elapsed));
+
+    // Cleanup partial/processed state by default unless caller requested to keep state
+        if !keep_state {
+            let partial_filename = format!("{}/nsl_{:02}_global_count.partial", base_path, target_size);
+            let processed_filename = format!("{}/nsl_{:02}_global_count.processed", base_path, target_size);
+            match std::fs::remove_file(&partial_filename) {
+                Ok(_) => test_print(&format!("   Removed {}", partial_filename)),
+                Err(e) => test_print(&format!("   [WARN] Could not remove {}: {}", partial_filename, e)),
+            }
+            match std::fs::remove_file(&processed_filename) {
+                Ok(_) => test_print(&format!("   Removed {}", processed_filename)),
+                Err(e) => test_print(&format!("   [WARN] Could not remove {}: {}", processed_filename, e)),
+            }
+        } else {
+            debug_print(&format!("   Keeping partial/processed state for size {:02}", target_size));
+        }
     Ok(())
 }
 
@@ -830,154 +1005,315 @@ fn is_intermediary_file_valid(intermediary_file: &str, source_files: &[std::path
 }
 
 /// Process a batch of files and write results to an intermediary file
-fn process_count_batch(files: &[std::path::PathBuf], output_file: &str, _target_size: u8) -> std::io::Result<()> {
-    use std::fs;
+// Helper: create input-intermediary files from a list of .rkyv files (one per source batch)
+fn create_input_intermediary_from_files(files: &[std::path::PathBuf], output_file: &str) -> std::io::Result<u64> {
+    use std::fs::File;
     use std::io::Write;
-    use std::collections::BTreeMap;
-    
-    // Key: (source_batch, target_batch), Value: (filename, count)
-    let mut file_info: BTreeMap<(u32, u32), (String, u64)> = BTreeMap::new();
-    
+    use memmap2::Mmap;
+
+    let mut total = 0u64;
+    let mut out = std::fs::File::create(output_file)?;
+
     for path in files {
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            // Parse source and target batch numbers
-            // Format: nsl_XX_batch_YYYYY_to_ZZ_batch_BBBBB.rkyv
-            // Note: batch widths are zero-padded and depend on size: 5 digits for sizes < 11, 6 digits for sizes >= 11
-            if let Some(to_pos) = name.find("_to_") {
-                let before_to = &name[..to_pos];
-                let after_to = &name[to_pos + 4..];
-                
-                // Extract source batch
-                if let Some(src_batch_pos) = before_to.rfind("_batch_") {
-                    let src_batch_str = &before_to[src_batch_pos + 7..];
-                    if let Ok(source_batch) = src_batch_str.parse::<u32>() {
-                        // Extract target batch
-                        if let Some(tgt_batch_pos) = after_to.rfind("_batch_") {
-                            let tgt_batch_str = &after_to[tgt_batch_pos + 7..after_to.len() - 5]; // -5 for ".rkyv"
-                            if let Ok(target_batch) = tgt_batch_str.parse::<u32>() {
-                                // Read file and count entries
-                                if let Some(vec_nlist) = read_from_file_serialized(path.to_str().unwrap()) {
-                                    let count = vec_nlist.len() as u64;
-                                    file_info.insert((source_batch, target_batch), (name.to_string(), count));
-                                    test_print(&format!("      {:>10} lists in {}",
-                                        count.separated_string(), name));
-                                }
-                            }
-                        }
-                    }
+            let file = File::open(path)?;
+            let mmap = unsafe { Mmap::map(&file)? };
+            match check_archived_root::<Vec<NoSetListSerialized>>(&mmap[..]) {
+                Ok(arch) => {
+                    let count = arch.len() as u64;
+                    total += count;
+                    writeln!(out, "   ... {:>8} lists in {}", count, name)?;
+                    test_print(&format!("       {:>10} lists in {}", count.separated_string(), name));
+                }
+                Err(e) => {
+                    debug_print(&format!("create_input_intermediary_from_files: Validation error for {}: {:?}", name, e));
                 }
             }
         }
     }
-    
-    // Write intermediary file (format: "   ... count lists in filename")
-    let mut file = fs::File::create(output_file)?;
-    for ((_source_batch, _target_batch), (filename, count)) in file_info.iter() {
-        writeln!(file, "   ... {:>8} lists in {}", count, filename)?;
+
+    Ok(total)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::{self, File};
+    use std::io::Write;
+    use std::path::PathBuf;
+
+    #[test]
+    fn incremental_count_resume() {
+        // Create a temporary directory
+        let mut base = std::env::temp_dir();
+        base.push(format!("funny_test_{}", chrono::Local::now().timestamp_nanos_opt().unwrap_or(0)));
+        let base = base;
+        fs::create_dir_all(&base).unwrap();
+
+        // Prepare two intermediary files for target size 09, source size 08
+        let target_size = 9u8;
+        let src_size = 8u8;
+
+        let file_a = base.join(format!("nsl_{:02}_intermediate_count_from_{:02}_{:06}.txt", target_size, src_size, 0));
+        let mut fa = File::create(&file_a).unwrap();
+        writeln!(fa, "   ... 5 lists in nsl_{:02}_batch_{:06}_to_{:02}_batch_{:06}.rkyv", src_size, 0, target_size, 10).unwrap();
+        writeln!(fa, "   ... 3 lists in nsl_{:02}_batch_{:06}_to_{:02}_batch_{:06}.rkyv", src_size, 0, target_size, 11).unwrap();
+
+        let file_b = base.join(format!("nsl_{:02}_intermediate_count_from_{:02}_{:06}.txt", target_size, src_size, 1));
+        let mut fb = File::create(&file_b).unwrap();
+        writeln!(fb, "   ... 7 lists in nsl_{:02}_batch_{:06}_to_{:02}_batch_{:06}.rkyv", src_size, 1, target_size, 12).unwrap();
+
+        // Run count first time
+        count_size_files(base.to_str().unwrap(), target_size, false, true).unwrap();
+
+        let partial = base.join(format!("nsl_{:02}_global_count.partial", target_size));
+        let processed = base.join(format!("nsl_{:02}_global_count.processed", target_size));
+        assert!(partial.exists());
+        assert!(processed.exists());
+
+        let before = fs::read_to_string(&partial).unwrap();
+        let before_lines = before.lines().count();
+        assert!(before_lines >= 3);
+
+        // Run count second time; it should not duplicate partial entries
+        count_size_files(base.to_str().unwrap(), target_size, false, true).unwrap();
+        let after = fs::read_to_string(&partial).unwrap();
+        let after_lines = after.lines().count();
+        assert_eq!(before_lines, after_lines);
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&base);
     }
-    
+
+    #[test]
+    fn force_regenerates_global_count_preserves_intermediaries() {
+        // Create a temporary directory
+        let mut base = std::env::temp_dir();
+        base.push(format!("funny_test_force_{}", chrono::Local::now().timestamp_nanos_opt().unwrap_or(0)));
+        let base = base;
+        fs::create_dir_all(&base).unwrap();
+
+        let target_size = 9u8;
+        let src_size = 8u8;
+
+        let file_a = base.join(format!("nsl_{:02}_intermediate_count_from_{:02}_{:06}.txt", target_size, src_size, 0));
+        let mut fa = File::create(&file_a).unwrap();
+        writeln!(fa, "   ... 5 lists in nsl_{:02}_batch_{:06}_to_{:02}_batch_{:06}.rkyv", src_size, 0, target_size, 10).unwrap();
+
+        // Initial count (normal)
+        count_size_files(base.to_str().unwrap(), target_size, false, false).unwrap();
+
+        // Record intermediary contents
+        let orig_inter = fs::read_to_string(&file_a).unwrap();
+
+        // Run count again with force=true; should regenerate global report but not change intermediaries
+        count_size_files(base.to_str().unwrap(), target_size, true, false).unwrap();
+
+        // Ensure intermediary file unchanged
+        let new_inter = fs::read_to_string(&file_a).unwrap();
+        assert_eq!(orig_inter, new_inter, "Intermediary file was modified by force run");
+
+        // Ensure global report exists and contains totals
+        let report = base.join(format!("nsl_{:02}_global_count.txt", target_size));
+        assert!(report.exists());
+        let report_contents = fs::read_to_string(&report).unwrap();
+        assert!(report_contents.contains("Total lists") || report_contents.contains("Total files"));
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn default_cleanup_removes_partial_processed() {
+        // Create a temporary directory
+        let mut base = std::env::temp_dir();
+        base.push(format!("funny_test_cleanup_{}", chrono::Local::now().timestamp_nanos_opt().unwrap_or(0)));
+        let base = base;
+        fs::create_dir_all(&base).unwrap();
+
+        let target_size = 9u8;
+        let src_size = 8u8;
+
+        let file_a = base.join(format!("nsl_{:02}_intermediate_count_from_{:02}_{:06}.txt", target_size, src_size, 0));
+        let mut fa = File::create(&file_a).unwrap();
+        writeln!(fa, "   ... 5 lists in nsl_{:02}_batch_{:06}_to_{:02}_batch_{:06}.rkyv", src_size, 0, target_size, 10).unwrap();
+
+        // Run count with default cleanup (keep_state=false)
+        count_size_files(base.to_str().unwrap(), target_size, false, false).unwrap();
+
+        let partial = base.join(format!("nsl_{:02}_global_count.partial", target_size));
+        let processed = base.join(format!("nsl_{:02}_global_count.processed", target_size));
+        assert!(!partial.exists(), "Partial file should be removed by default");
+        assert!(!processed.exists(), "Processed file should be removed by default");
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn cleanup_on_empty_run_removes_state() {
+        let mut base = std::env::temp_dir();
+        base.push(format!("funny_test_cleanup_empty_{}", chrono::Local::now().timestamp_nanos_opt().unwrap_or(0)));
+        let base = base;
+        fs::create_dir_all(&base).unwrap();
+
+        let target_size = 9u8;
+
+        // Create dummy partial and processed files
+        let partial = base.join(format!("nsl_{:02}_global_count.partial", target_size));
+        let processed = base.join(format!("nsl_{:02}_global_count.processed", target_size));
+        File::create(&partial).unwrap();
+        File::create(&processed).unwrap();
+
+        // Run count where no intermediary files exist; should remove state by default
+        count_size_files(base.to_str().unwrap(), target_size, false, false).unwrap();
+
+        assert!(!partial.exists());
+        assert!(!processed.exists());
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn stale_intermediary_is_recreated() {
+        // Create a temporary directory
+        let mut base = std::env::temp_dir();
+        base.push(format!("funny_test_stale_{}", chrono::Local::now().timestamp_nanos_opt().unwrap_or(0)));
+        let base = base;
+        fs::create_dir_all(&base).unwrap();
+
+        let target_size = 9u8;
+        let src_size = 8u8;
+
+        // Prepare a source file (simulate .rkyv) and an intermediary older than the source
+        let src_file = base.join(format!("nsl_{:02}_batch_{:06}_to_{:02}_batch_{:06}.rkyv", src_size, 0, target_size, 10));
+        let mut sf = File::create(&src_file).unwrap();
+        writeln!(sf, "dummy").unwrap();
+
+        // Create an intermediary first so it's older
+        let inter = base.join(format!("nsl_{:02}_intermediate_count_from_{:02}_{:06}.txt", target_size, src_size, 0));
+        let mut ia = File::create(&inter).unwrap();
+        writeln!(ia, "   ... old entry").unwrap();
+
+        // Now update source to be newer by touching it (write again)
+        let mut sf = std::fs::OpenOptions::new().append(true).open(&src_file).unwrap();
+        writeln!(sf, "updated").unwrap();
+
+        // Run count; it should detect stale intermediary and recreate it
+        count_size_files(base.to_str().unwrap(), target_size, false, true).unwrap();
+
+        // Check intermediary mtime is newer than initial creation (i.e., was recreated)
+        let meta = fs::metadata(&inter).unwrap();
+        let mtime = meta.modified().unwrap();
+        // Ensure mtime is recent (within 60s)
+        let age = chrono::Local::now().signed_duration_since(chrono::DateTime::<chrono::Local>::from(mtime));
+        assert!(age.num_seconds() < 60, "Intermediary was not recreated (mtime too old)");
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn regenerate_report_from_partial_updates_report() {
+        // Create a temporary directory
+        let mut base = std::env::temp_dir();
+        base.push(format!("funny_test_regen_{}", chrono::Local::now().timestamp_nanos_opt().unwrap_or(0)));
+        let base = base;
+        fs::create_dir_all(&base).unwrap();
+
+        let target_size = 9u8;
+
+        let partial = base.join(format!("nsl_{:02}_global_count.partial", target_size));
+        let mut pf = File::create(&partial).unwrap();
+        // write one partial entry: src,tgt,count,filename
+        writeln!(pf, "{},{},{},{}", 0u32, 12u32, 7u64, "nsl_08_batch_000000_to_09_batch_000012.rkyv").unwrap();
+
+        // Run regen helper
+        regenerate_report_from_partial(base.to_str().unwrap(), target_size, partial.to_str().unwrap(), 1).unwrap();
+
+        let report = base.join(format!("nsl_{:02}_global_count.txt", target_size));
+        assert!(report.exists());
+        let contents = fs::read_to_string(&report).unwrap();
+        assert!(contents.contains("nsl_08_batch_000000_to_09_batch_000012.rkyv"));
+        assert!(contents.contains("Total lists") || contents.contains("Total files") || contents.contains("Total lists (partial)"));
+
+        // Append another partial entry and regen again
+        let mut pf = std::fs::OpenOptions::new().append(true).open(&partial).unwrap();
+        writeln!(pf, "{},{},{},{}", 0u32, 13u32, 3u64, "nsl_08_batch_000000_to_09_batch_000013.rkyv").unwrap();
+        regenerate_report_from_partial(base.to_str().unwrap(), target_size, partial.to_str().unwrap(), 2).unwrap();
+
+        let contents2 = fs::read_to_string(&report).unwrap();
+        assert!(contents2.contains("nsl_08_batch_000000_to_09_batch_000013.rkyv"));
+        assert!(contents2.contains("Total lists (partial)") || contents2.contains("Total lists"));
+
+        let _ = fs::remove_dir_all(&base);
+    }
+}
+
+/// Regenerate the consolidated global report from the partial CSV file.
+/// This is called after each processed batch so the human-readable global report
+/// is up-to-date and reflects progress mid-run.
+pub fn regenerate_report_from_partial(base_path: &str, target_size: u8, partial_filename: &str, intermediary_files_total: usize) -> std::io::Result<()> {
+    use std::fs::File;
+    use std::io::{BufRead, BufReader, Write};
+    use std::collections::BTreeMap;
+
+    if !std::path::Path::new(partial_filename).exists() {
+        return Ok(());
+    }
+
+    let file = File::open(partial_filename)?;
+    let reader = BufReader::new(file);
+
+    // Map by filename to keep the latest entry per file (avoid duplicates)
+    let mut by_file: BTreeMap<String, (u32, u32, u64)> = BTreeMap::new();
+    for line in reader.lines() {
+        let line = line?;
+        let parts: Vec<&str> = line.splitn(4, ',').collect();
+        if parts.len() == 4 {
+            if let (Ok(src), Ok(tgt), Ok(count)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>(), parts[2].parse::<u64>()) {
+                let filename = parts[3].to_string();
+                by_file.insert(filename, (src, tgt, count));
+            }
+        }
+    }
+
+    // Build sorted vector similar to final report
+    let mut all_file_info: Vec<((u32, u32), (String, u64))> = Vec::new();
+    for (filename, (src, tgt, count)) in by_file {
+        all_file_info.push(((src, tgt), (filename, count)));
+    }
+    all_file_info.sort_by(|a, b| match a.0.1.cmp(&b.0.1) {
+        std::cmp::Ordering::Equal => a.0.0.cmp(&b.0.0),
+        other => other,
+    });
+
+    let report_path = format!("{}/nsl_{:02}_global_count.txt", base_path, target_size);
+    let tmp = format!("{}/.nsl_{:02}_global_count.tmp", base_path, target_size);
+    let mut report_file = File::create(&tmp)?;
+
+    writeln!(report_file, "# File Count Summary for no-set-{:02} lists (IN-PROGRESS)", target_size)?;
+    writeln!(report_file, "# Generated (progress): {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"))?;
+    writeln!(report_file, "# Input directory: {}", base_path)?;
+    writeln!(report_file, "# Intermediary files total: {} batch files", intermediary_files_total)?;
+    writeln!(report_file, "# Intermediaries used (partial): {}", all_file_info.len())?;
+    writeln!(report_file, "# Format: source_batch target_batch | cumulative_nb_lists | nb_lists_in_file | filename")?;
+    writeln!(report_file, "#")?;
+
+    let mut cumulative = 0u64;
+    for ((source_batch, target_batch), (filename, count)) in all_file_info.iter() {
+        cumulative += *count;
+        writeln!(report_file, "{:06} {:06} | {:>15} | {:>15} | {}", source_batch, target_batch, cumulative.separated_string(), count.separated_string(), filename)?;
+    }
+
+    writeln!(report_file, "#")?;
+    writeln!(report_file, "# Total partial files: {}", all_file_info.len())?;
+    writeln!(report_file, "# Total lists (partial): {}", cumulative.separated_string())?;
+
+    let _ = std::fs::rename(&tmp, &report_path);
     Ok(())
 }
 
 /// Consolidate all intermediary count files into the final report
-fn consolidate_count_files(intermediary_files: &[String], base_path: &str, target_size: u8) -> std::io::Result<()> {
-    use std::fs;
-    use std::io::{BufRead, BufReader, Write};
-    use std::collections::BTreeMap;
-    
-    // Key: (source_batch, target_batch), Value: (filename, count)
-    let mut all_file_info: BTreeMap<(u32, u32), (String, u64)> = BTreeMap::new();
-    
-    // Read all intermediary files
-    for intermediary_file in intermediary_files {
-        let file = fs::File::open(intermediary_file)?;
-        let reader = BufReader::new(file);
-        
-        for line in reader.lines() {
-            let line = line?;
-            // Format: "   ... count lists in filename"
-            if line.trim().starts_with("...") {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                // parts = ["...", count, "lists", "in", filename]
-                if parts.len() >= 5 {
-                    if let Ok(count) = parts[1].parse::<u64>() {
-                        let filename = parts[4];
-                        // Parse source and target batch numbers from filename
-                        if let Some(to_pos) = filename.find("_to_") {
-                            let before_to = &filename[..to_pos];
-                            let after_to = &filename[to_pos + 4..];
-                            
-                            if let Some(src_batch_pos) = before_to.rfind("_batch_") {
-                                let src_batch_str = &before_to[src_batch_pos + 7..];
-                                if let Ok(src_batch) = src_batch_str.parse::<u32>() {
-                                    if let Some(tgt_batch_pos) = after_to.rfind("_batch_") {
-                                        let tgt_batch_str = &after_to[tgt_batch_pos + 7..after_to.len() - 5]; // -5 for ".rkyv"
-                                        if let Ok(tgt_batch) = tgt_batch_str.parse::<u32>() {
-                                            all_file_info.insert((src_batch, tgt_batch), (filename.to_string(), count));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    // Create final summary report file
-    let report_filename = format!("{}/no_set_list_count_{:02}.txt", base_path, target_size);
-    let mut report_file = fs::File::create(&report_filename)?;
-    
-    // Write header
-    writeln!(report_file, "# File Count Summary for no-set-{:02} lists", target_size)?;
-    writeln!(report_file, "# Generated: {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"))?;
-    writeln!(report_file, "# Input directory: {}", base_path)?;
-    writeln!(report_file, "# Intermediary files used: {} batch files", intermediary_files.len())?;
-    writeln!(report_file, "# Format: source_batch target_batch | cumulative_nb_lists | nb_lists_in_file | filename")?;
-    writeln!(report_file, "#")?;
-    
-    // Sort by target_batch (ascending), then source_batch (ascending) for cumulative calculation
-    let mut sorted_files: Vec<_> = all_file_info.iter().collect();
-    sorted_files.sort_by(|a, b| {
-        match a.0.1.cmp(&b.0.1) { // target_batch ascending
-            std::cmp::Ordering::Equal => a.0.0.cmp(&b.0.0), // source_batch ascending
-            other => other,
-        }
-    });
-    
-    // Calculate cumulative totals (from lowest to highest batch)
-    let mut cumulative = 0u64;
-    let mut report_lines = Vec::new();
-    
-    for ((source_batch, target_batch), (filename, count)) in sorted_files.iter() {
-        cumulative += count;
-        report_lines.push(format!(
-            "{:05} {:05} | {:>15} | {:>15} | {}",
-            source_batch,
-            target_batch,
-            cumulative.separated_string(),
-            count.separated_string(),
-            filename
-        ));
-    }
-    
-    // Write lines in REVERSE order (highest batch first, lowest last)
-    for line in report_lines.iter().rev() {
-        writeln!(report_file, "{}", line)?;
-    }
-    
-    // Write summary at the end
-    writeln!(report_file, "#")?;
-    writeln!(report_file, "# Total files: {}", all_file_info.len())?;
-    writeln!(report_file, "# Total lists: {}", cumulative.separated_string())?;
-    
-    debug_print(&format!("\n   Summary written to: {}", report_filename));
-    debug_print(&format!("   Total files: {}", all_file_info.len()));
-    debug_print(&format!("   Total lists: {}", cumulative.separated_string()));
-    
-    Ok(())
-}
+// Removed: consolidate_count_files - output-intermediary files are no longer used.
 
 /// Check repository integrity for a specific size
 /// - Lists missing output batches (should be continuous)
@@ -1031,14 +1367,14 @@ pub fn check_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
             }
         }
         
-        test_print(&format!("   Batch range: {:05} to {:05}", min_batch, max_batch));
+        test_print(&format!("   Batch range: {:06} to {:06}", min_batch, max_batch));
         
         if missing_batches.is_empty() {
             test_print("   [OK] No missing batches in sequence");
         } else {
             test_print(&format!("   [!!] Found {} missing batches:", missing_batches.len()));
             for batch in &missing_batches {
-                test_print(&format!("        - Batch {:05}", batch));
+                test_print(&format!("        - Batch {:06}", batch));
             }
         }
     } else {
@@ -1051,11 +1387,11 @@ pub fn check_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
         .collect();
     
     // Step 2: Check consolidated count file for missing files
-    let consolidated_count_file = format!("{}/no_set_list_count_{:02}.txt", base_path, target_size);
+    let consolidated_count_file = format!("{}/nsl_{:02}_global_count.txt", base_path, target_size);
     let consolidated_path = std::path::Path::new(&consolidated_count_file);
     
     if consolidated_path.exists() {
-        test_print(&format!("\n   Checking consolidated count file: no_set_list_count_{:02}.txt", target_size));
+        test_print(&format!("\n   Checking consolidated count file: nsl_{:02}_global_count.txt", target_size));
         
         let file = fs::File::open(consolidated_path)?;
         let reader = BufReader::new(file);
@@ -1094,18 +1430,19 @@ pub fn check_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
             }
         }
     } else {
-        test_print(&format!("\n   Consolidated count file not found: no_set_list_count_{:02}.txt", target_size));
+        test_print(&format!("\n   Consolidated count file not found: nsl_{:02}_global_count.txt", target_size));
         test_print("   Run --count mode first to generate count file");
     }
     
     // Step 3: Read intermediary count files and check for missing files
-    let count_pattern = format!("no_set_list_intermediate_count_{:02}_", target_size);
+    // Match new 'from_' pattern only
+    let count_pattern_new = format!("nsl_{:02}_intermediate_count_from_", target_size);
     let entries = fs::read_dir(base_path)?;
     
     let mut intermediary_files: Vec<PathBuf> = Vec::new();
     for entry in entries.flatten() {
         if let Some(name) = entry.file_name().to_str() {
-            if name.starts_with(&count_pattern) && name.ends_with(".txt") {
+            if name.starts_with(&count_pattern_new) && name.ends_with(".txt") {
                 intermediary_files.push(entry.path());
             }
         }
@@ -1162,144 +1499,312 @@ pub fn check_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
 /// Reads all files for a given size, consolidates them, and replaces originals
 pub fn compact_size_files(input_dir: &str, output_dir: &str, target_size: u8, batch_size: u64) -> std::io::Result<()> {
     use std::fs;
-    use std::collections::BTreeMap;
     
     test_print(&format!("\nCompacting files for size {:02}...", target_size));
     test_print(&format!("Target batch size: {} lists per file", batch_size.separated_string()));
     
     let start_time = std::time::Instant::now();
     
-    // Find all files for this target size
-    let pattern = format!("*_to_{:02}_batch_*.rkyv", target_size);
-    let paths = fs::read_dir(input_dir)?
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .filter(|path| {
-            if let Some(name) = path.file_name() {
-                let name_str = name.to_string_lossy();
-                // Skip already compacted files
-                !name_str.contains("compacted") && 
-                wildmatch::WildMatch::new(&pattern).matches(&name_str)
-            } else {
-                false
+    // Prefer to read plan from consolidated count file if available
+    let report_filename = format!("{}/nsl_{:02}_global_count.txt", input_dir, target_size);
+    let mut input_files_ordered: Vec<String> = Vec::new(); // base filenames
+
+    if std::path::Path::new(&report_filename).exists() {
+        test_print(&format!("   Found consolidated count file: {}", report_filename));
+        // Parse consolidated file to obtain ordered list of filenames (ascending target_batch, then source_batch)
+        let file = fs::File::open(&report_filename)?;
+        use std::io::{BufRead, BufReader};
+        let reader = BufReader::new(file);
+        let mut entries: Vec<(u32, u32, String)> = Vec::new();
+        for line in reader.lines() {
+            let line = line?;
+            if line.trim().is_empty() || line.trim().starts_with('#') { continue; }
+            // Format: "{:05} {:05} | cumulative | count | filename"
+            let parts: Vec<&str> = line.split('|').collect();
+            if parts.len() >= 4 {
+                let src_tgt = parts[0].trim();
+                let fields: Vec<&str> = src_tgt.split_whitespace().collect();
+                if fields.len() >= 2 {
+                    if let (Ok(src), Ok(tgt)) = (fields[0].parse::<u32>(), fields[1].parse::<u32>()) {
+                        let filename = parts[3].trim().to_string();
+                        entries.push((src, tgt, filename));
+                    }
+                }
             }
-        })
-        .collect::<Vec<_>>();
-    
-    if paths.is_empty() {
+        }
+        // sort ascending target batch then source batch
+        entries.sort_by(|a, b| match a.1.cmp(&b.1) { std::cmp::Ordering::Equal => a.0.cmp(&b.0), other => other });
+        for (_src, _tgt, fname) in entries {
+            input_files_ordered.push(fname);
+        }
+    } else {
+        test_print("   Consolidated count file not found; falling back to directory scan");
+        // Fallback: scan directory for matching files (skip already compacted outputs)
+        let pattern = format!("*_to_{:02}_batch_*.rkyv", target_size);
+        let mut paths = fs::read_dir(input_dir)?
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|name| !name.contains("compacted") && wildmatch::WildMatch::new(&pattern).matches(name))
+            .collect::<Vec<_>>();
+        paths.sort();
+        for name in paths { input_files_ordered.push(name); }
+    }
+
+    if input_files_ordered.is_empty() {
         test_print("   No files found to compact");
         return Ok(());
     }
+    test_print(&format!("   Found {} files to compact (according to plan)", input_files_ordered.len()));
     
-    test_print(&format!("   Found {} files to compact", paths.len()));
-    
-    // Parse filenames and sort by target batch number
-    let mut file_map: BTreeMap<u32, (u32, String)> = BTreeMap::new(); // target_batch -> (source_batch, filename)
-    
-    for path in &paths {
-        if let Some(filename) = path.file_name() {
-            let name = filename.to_string_lossy();
-            // Parse: nsl_{src:02}_batch_{src_batch:05}_to_{tgt:02}_batch_{tgt_batch:05}.rkyv
-            let parts: Vec<&str> = name.split('_').collect();
-            if parts.len() >= 8 {
-                if let (Ok(src_batch), Ok(tgt_batch)) = (
-                    parts[3].parse::<u32>(),
-                    parts[7].trim_end_matches(".rkyv").parse::<u32>()
-                ) {
-                    file_map.insert(tgt_batch, (src_batch, name.to_string()));
+    // Build plan from metadata files (do NOT inspect .rkyv content to decide plan)
+    // Prefer consolidated count file; otherwise use intermediary input count files for the previous size.
+    let mut file_counts: Vec<(String, u64, u32, u32)> = Vec::new(); // (filename, count, src_batch, tgt_batch)
+    let mut total_lists = 0u64;
+
+    // 1) Consolidated count file
+    if std::path::Path::new(&report_filename).exists() {
+        test_print("   Building plan from consolidated count file");
+        use std::io::{BufRead, BufReader};
+        let file = fs::File::open(&report_filename)?;
+        let reader = BufReader::new(file);
+        for line in reader.lines() {
+            let line = line?;
+            if line.trim().is_empty() || line.trim().starts_with('#') { continue; }
+            let parts: Vec<&str> = line.split('|').collect();
+            if parts.len() >= 4 {
+                // parts[0] = "src tgt", parts[2] = count, parts[3] = filename
+                let src_tgt = parts[0].trim();
+                let fields: Vec<&str> = src_tgt.split_whitespace().collect();
+                if fields.len() >= 2 {
+                    if let (Ok(src), Ok(tgt)) = (fields[0].parse::<u32>(), fields[1].parse::<u32>()) {
+                        let count_str = parts[2].trim();
+                        let digits_only: String = count_str.chars().filter(|c| c.is_ascii_digit()).collect();
+                        if let Ok(count) = digits_only.parse::<u64>() {
+                            let filename = parts[3].trim().to_string();
+                            file_counts.push((filename, count, src, tgt));
+                            total_lists += count;
+                        }
+                    }
                 }
             }
         }
     }
-    
-    // Load all lists from all files
-    let mut all_lists: Vec<(NoSetListSerialized, u32)> = Vec::new(); // (list, source_batch)
-    let mut total_loaded = 0u64;
-    
-    for (tgt_batch, (src_batch, filename)) in &file_map {
-        let filepath = format!("{}/{}", input_dir, filename);
-        test_print(&format!("   Loading {} (source batch {:05}, target batch {:05})...", 
-            filename, src_batch, tgt_batch));
-        
-        match load_lists_from_file(&filepath) {
-            Ok(lists) => {
-                let count = lists.len();
-                total_loaded += count as u64;
-                for list in lists {
-                    all_lists.push((list, *src_batch));
+
+    // 2) Intermediary input count files (if consolidated missing or incomplete)
+    if file_counts.is_empty() {
+        let prev_size = target_size - 1;
+        let pattern = format!("no_set_list_input_intermediate_count_{:02}_", prev_size);
+        let mut intermediary_files: Vec<String> = Vec::new();
+        let entries = fs::read_dir(input_dir)?;
+        for entry in entries.flatten() {
+            if let Some(name) = entry.file_name().to_str() {
+                if name.starts_with(&pattern) && name.ends_with(".txt") {
+                    intermediary_files.push(format!("{}/{}", input_dir, name));
                 }
-                test_print(&format!("      Loaded {} lists", count.separated_string()));
-            }
-            Err(e) => {
-                eprintln!("   Error loading {}: {}", filename, e);
-                return Err(e);
             }
         }
+        intermediary_files.sort();
+
+        if !intermediary_files.is_empty() {
+            test_print(&format!("   Building plan from {} intermediary input count files", intermediary_files.len()));
+            use std::io::{BufRead, BufReader};
+            for inter in intermediary_files {
+                let file = fs::File::open(&inter)?;
+                let reader = BufReader::new(file);
+                for line in reader.lines() {
+                    let line = line?;
+                    if line.trim().starts_with("...") {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        if parts.len() >= 5 {
+                            if let Ok(count) = parts[1].parse::<u64>() {
+                                let filename = parts[4].to_string();
+                                // parse batches from filename
+                                if let Some(to_pos) = filename.find("_to_") {
+                                    let before_to = &filename[..to_pos];
+                                    let after_to = &filename[to_pos + 4..];
+                                    if let Some(src_batch_pos) = before_to.rfind("_batch_") {
+                                        let src_batch_str = &before_to[src_batch_pos + 7..];
+                                        if let Ok(src_batch) = src_batch_str.parse::<u32>() {
+                                            if let Some(tgt_batch_pos) = after_to.rfind("_batch_") {
+                                                let tgt_batch_str = &after_to[tgt_batch_pos + 7..after_to.len() - 5];
+                                                if let Ok(tgt_batch) = tgt_batch_str.parse::<u32>() {
+                                                    file_counts.push((filename, count, src_batch, tgt_batch));
+                                                    total_lists += count;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // sort by target_batch then source batch
+            file_counts.sort_by(|a, b| match a.3.cmp(&b.3) { std::cmp::Ordering::Equal => a.2.cmp(&b.2), other => other });
+        }
     }
+
+    // If we still have no metadata, abort and ask the user to run --count
+    if file_counts.is_empty() {
+        test_print("   No consolidated or intermediary count files found. Run --count <SIZE> first to generate counts.");
+        return Ok(());
+    }
+
+    test_print(&format!("\n   Total lists accounted for in plan: {}", total_lists.separated_string()));
     
-    test_print(&format!("\n   Total lists loaded: {}", total_loaded.separated_string()));
-    
-    // Create compacted files
-    let mut new_batch = 0u32;
-    let mut new_file_lists: Vec<NoSetListSerialized> = Vec::new();
-    let mut first_source_batch: Option<u32> = None;
+    // Execute plan: stream each input file and write into compacted outputs in order.
+    // We will only hold up to `batch_size` lists in memory for the current compacted file.
+    const READ_CHUNK_SIZE: usize = 2_000_000; // max lists to deserialize per read chunk
+
+    // Ensure output dir exists
+    if !std::path::Path::new(output_dir).exists() {
+        fs::create_dir_all(output_dir)?;
+    }
+
+    // Display plan summary
+    let expected_compacted_files = ((total_lists + batch_size - 1) / batch_size) as usize;
+    test_print(&format!("\n   Plan: Create ~{} compacted files (batch size {}) from {} input files", expected_compacted_files, batch_size.separated_string(), file_counts.len()));
+
+    let source_size = target_size - 1;
+    use std::io::Write;
+
+    // State for current compacted output
+    let mut current_compact_batch: u32 = 0;
+    let mut current_output_buffer: Vec<NoSetListSerialized> = Vec::new();
+    let mut current_first_source: Option<u32> = None;
+    let mut current_output_contribs: Vec<(u32, u64)> = Vec::new(); // (src_batch, count)
     let mut files_created = 0usize;
-    
-    for (list, src_batch) in all_lists {
-        if first_source_batch.is_none() {
-            first_source_batch = Some(src_batch);
+
+    // Helper to flush current output buffer to disk
+    let flush_current = |output_dir: &str,
+                             target_size: u8,
+                             batch_idx: u32,
+                             first_source_batch: Option<u32>,
+                             buffer: &mut Vec<NoSetListSerialized>,
+                             contribs: &[(u32, u64)],
+                             input_dir: &str,
+                             source_size: u8|
+                             -> std::io::Result<()> {
+        if buffer.is_empty() { return Ok(()); }
+        let from_src = first_source_batch.unwrap_or_else(|| if !contribs.is_empty() { contribs[0].0 } else { 0 });
+        // Use original filename pattern: nsl_{src}_batch_{src_batch}_to_{tgt}_batch_{tgt_batch}.rkyv
+        let src_batch_width = 6;
+        let tgt_batch_width = 6;
+        let filename = format!(
+            "{}/nsl_{:02}_batch_{:0srcw$}_to_{:02}_batch_{:0tgtw$}.rkyv",
+            output_dir, source_size, from_src, target_size, batch_idx,
+            srcw = src_batch_width, tgtw = tgt_batch_width);
+
+        test_print(&format!("   Writing compacted file {} ({} lists)", filename, buffer.len().separated_string()));
+        save_compacted_batch(&filename, &buffer)?;
+
+        // For each contribution from inputs, append an intermediary count file in the INPUT directory
+        use std::fs::OpenOptions;
+        for (src_batch, cnt) in contribs {
+            let inter_width = 6;
+            let inter_filename = format!("{}/nsl_{:02}_intermediate_count_from_{:02}_{:0width$}.txt",
+                input_dir, target_size, source_size, src_batch, width = inter_width);
+
+            if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&inter_filename) {
+                if let Err(e) = writeln!(f, "   ... {:>8} lists in {}", cnt, std::path::Path::new(&filename).file_name().unwrap().to_string_lossy()) {
+                    debug_print(&format!("compact: Error writing intermediary {}: {}", inter_filename, e));
+                } else {
+                    test_print(&format!("   ... appended {} lists -> {}", cnt.separated_string(), inter_filename));
+                }
+            } else {
+                debug_print(&format!("compact: Error opening intermediary {} for append", inter_filename));
+            }
         }
-        
-        new_file_lists.push(list);
-        
-        if new_file_lists.len() as u64 >= batch_size {
-            // Save compacted file
-            let filename = format!("{}/nsl_compacted_{:02}_batch_{:05}_from_{:05}.rkyv",
-                output_dir, target_size, new_batch, first_source_batch.unwrap());
-            
-            test_print(&format!("   Creating compacted batch {:05} ({} lists, from source batch {:05})...",
-                new_batch, new_file_lists.len().separated_string(), first_source_batch.unwrap()));
-            
-            save_compacted_batch(&filename, &new_file_lists)?;
-            
-            new_batch += 1;
-            files_created += 1;
-            new_file_lists.clear();
-            first_source_batch = None;
+
+        buffer.clear();
+        Ok(())
+    };
+
+    // Process each input file in plan order
+    for (base_name, count, src_batch, _tgt_batch) in file_counts {
+        let filepath = format!("{}/{}", input_dir, base_name);
+        test_print(&format!("\n   Processing input file {} ({} lists)", base_name, count.separated_string()));
+
+        // Map file and access archived vec directly to deserialize in chunks
+        let file = fs::File::open(&filepath)?;
+        let mmap = unsafe { Mmap::map(&file)? };
+        let archived = match check_archived_root::<Vec<NoSetListSerialized>>(&mmap[..]) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("   Error validating {}: {:?}", base_name, e);
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Archive validation failed"));
+            }
+        };
+        let total = archived.len();
+        let mut idx = 0usize;
+
+        while idx < total {
+            let take = std::cmp::min(READ_CHUNK_SIZE, total - idx);
+            // Deserialize chunk
+            let mut chunk: Vec<NoSetListSerialized> = Vec::with_capacity(take);
+            for i in idx..(idx + take) {
+                let archived_elem = archived.get(i).expect("index in range");
+                let des: NoSetListSerialized = archived_elem.deserialize(&mut rkyv::Infallible).expect("deserialization");
+                chunk.push(des);
+            }
+            idx += take;
+
+            // Append chunk elements into current output buffers, flushing as needed
+            let mut chunk_idx = 0usize;
+            while chunk_idx < chunk.len() {
+                let space_left = (batch_size as usize) - current_output_buffer.len();
+                let take_now = std::cmp::min(space_left, chunk.len() - chunk_idx);
+
+                if current_first_source.is_none() { current_first_source = Some(src_batch); }
+                // record contribution from this src_batch
+                let mut found = false;
+                for entry in current_output_contribs.iter_mut() {
+                    if entry.0 == src_batch {
+                        entry.1 += take_now as u64;
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    current_output_contribs.push((src_batch, take_now as u64));
+                }
+
+                // move elements
+                current_output_buffer.extend(chunk[chunk_idx..chunk_idx + take_now].iter().cloned());
+                chunk_idx += take_now;
+
+                // If buffer full, flush to disk
+                if current_output_buffer.len() as u64 >= batch_size {
+                    flush_current(output_dir, target_size, current_compact_batch, current_first_source, &mut current_output_buffer, &current_output_contribs, input_dir, source_size)?;
+                    files_created += 1;
+                    current_compact_batch += 1;
+                    current_first_source = None;
+                    current_output_contribs.clear();
+                }
+            }
         }
     }
-    
-    // Save remaining lists
-    if !new_file_lists.is_empty() {
-        let filename = format!("{}/nsl_compacted_{:02}_batch_{:05}_from_{:05}.rkyv",
-            output_dir, target_size, new_batch, first_source_batch.unwrap());
-        
-        test_print(&format!("   Creating final compacted batch {:05} ({} lists, from source batch {:05})...",
-            new_batch, new_file_lists.len().separated_string(), first_source_batch.unwrap()));
-        
-        save_compacted_batch(&filename, &new_file_lists)?;
+
+    // Flush any remaining lists
+    if !current_output_buffer.is_empty() {
+        flush_current(output_dir, target_size, current_compact_batch, current_first_source, &mut current_output_buffer, &current_output_contribs, input_dir, source_size)?;
         files_created += 1;
-    }
-    
-    // Delete original files
-    test_print("\n   Deleting original files...");
-    for path in &paths {
-        if let Err(e) = fs::remove_file(path) {
-            eprintln!("   Warning: Could not delete {:?}: {}", path, e);
-        }
+        current_output_contribs.clear();
     }
     
     let elapsed = start_time.elapsed().as_secs_f64();
     test_print(&format!("\nCompaction completed in {:.2} seconds", elapsed));
-    test_print(&format!("   Original files: {}", paths.len()));
+    test_print(&format!("   Input files: {}", input_files_ordered.len()));
     test_print(&format!("   Compacted files: {}", files_created));
-    test_print(&format!("   Total lists: {}", total_loaded.separated_string()));
-    test_print(&format!("   Compression ratio: {:.1}x", paths.len() as f64 / files_created as f64));
+    test_print(&format!("   Total lists: {}", total_lists.separated_string()));
+    test_print(&format!("   Compression ratio: {:.1}x", input_files_ordered.len() as f64 / files_created as f64));
     
     Ok(())
 }
 
 /// Load lists from a file (helper for compact mode)
+#[allow(dead_code)]
 fn load_lists_from_file(filepath: &str) -> std::io::Result<Vec<NoSetListSerialized>> {
     let file = File::open(filepath)?;
     let mmap = unsafe { Mmap::map(&file)? };
@@ -1371,7 +1876,7 @@ fn get_next_output_batch_from_files(
             if name.starts_with("nsl_") && name.contains(&pattern_prefix) && name.ends_with(".rkyv") {
                 // Extract the SOURCE batch number from filename
                 // Format: nsl_XX_batch_YYYYY_to_ZZ_batch_BBBBB.rkyv
-                // Note: batch widths are zero-padded and depend on size: 5 digits for sizes < 11, 6 digits for sizes >= 11
+                // Note: batch widths are zero-padded to 6 digits
                 if let Some(to_pos) = name.find("_to_") {
                     let before_to = &name[..to_pos];
                     if let Some(batch_pos) = before_to.rfind("_batch_") {
@@ -1400,7 +1905,7 @@ fn get_next_output_batch_from_files(
     
     let next_batch = max_target_batch.map_or(0, |max| max + 1);
     
-    debug_print(&format!("get_next_output_batch_from_files: next batch for size {:02} = {:05} (scanned filenames only)",
+    debug_print(&format!("get_next_output_batch_from_files: next batch for size {:02} = {:06} (scanned filenames only)",
         target_size, next_batch));
     
     next_batch
@@ -1417,7 +1922,7 @@ fn get_next_output_batch_from_files(
 /// - Size 11 target example: nsl_10_batch_00000_to_11_batch_000000.rkyv (6-digit target batch)
 ///
 /// Generate output filename when saving
-/// Uses 5-digit or 6-digit batch numbers depending on size (6 digits for sizes >= 11)
+/// Uses 6-digit batch numbers for all sizes
 fn output_filename(
     base_path: &str,
     source_size: u8,
@@ -1426,9 +1931,9 @@ fn output_filename(
     target_batch: u32
 ) -> String {
     use std::path::Path;
-    // Use 6-digit batch numbers for sizes >= 11
-    let src_batch_width = if source_size >= 11 { 6 } else { 5 };
-    let tgt_batch_width = if target_size >= 11 { 6 } else { 5 };
+    // Use 6-digit batch numbers (always)
+    let src_batch_width = 6;
+    let tgt_batch_width = 6;
     let filename = format!(
         "nsl_{:02}_batch_{:0width1$}_to_{:02}_batch_{:0width2$}.rkyv",
         source_size, source_batch, target_size, target_batch,
@@ -1448,7 +1953,7 @@ fn find_input_filename(
 ) -> Option<String> {
     use std::fs;
     
-    let batch_width = if target_size >= 11 { 6 } else { 5 };
+    let batch_width = 6;
     let pattern = format!("_to_{:02}_batch_{:0width$}.rkyv", target_size, target_batch, width = batch_width);
     debug_print(&format!("   ... looking for input file matching: *{} in {}", pattern, base_path));
     

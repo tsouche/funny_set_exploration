@@ -84,7 +84,7 @@ Options:
       --restart <SIZE> <BATCH>
           Restart from specific input batch, continue through size 18
           SIZE refers to INPUT size
-          Reads baseline from count file (use --force to regenerate)
+          Reads baseline from count file (use --force to regenerate; also supported with --count)
 
       --unitary <SIZE> <BATCH>
           Process only one specific input batch (unitary processing)
@@ -94,7 +94,7 @@ Options:
 
       --count <SIZE>
           Count existing files for target size
-          Creates no_set_list_count_XX.txt summary report
+          Creates nsl_{size:02}_global_count.txt summary report
 
       --force
           Force regeneration of count file (use with --restart or --unitary)
@@ -140,7 +140,7 @@ cargo run --release -- --unitary 5 2 --force -o "T:\data\funny_set_exploration"
 Count existing files without processing:
 
 ```powershell
-# Count all size 6 files, create no_set_list_count_06.txt
+# Count all size 6 files, create nsl_06_global_count.txt
 cargo run --release -- --count 6 -o "T:\data\funny_set_exploration"
 ```
 
