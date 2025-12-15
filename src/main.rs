@@ -41,135 +41,116 @@ use crate::utils::*;
 /// CLI arguments structure
 #[derive(Parser, Debug)]
 #[command(name = "funny_set_exploration")]
-#[command(about = "Generate no-set lists for the Set card game", long_about = None)]
+#[command(about = "Generate no-set lists for the Set card game",
+    long_about = concat!(
+        "Generate no-set lists for the Set card game\n\n",
+        "MODES (examples and how common args affect each mode):\n\n",
+        "1) Size mode (`--size`, `-s <SIZE|RANGE`)\n",
+        "   - Purpose: Build one target size or a range (e.g. 5-7).\n",
+        "   - Input path (-i): dir to read input files (required when\n",
+        "     not using defaults).\n",
+        "   - Output path (-o): dir to write outputs; if omitted,\n",
+        "     defaults to input or current dir.\n",
+        "   - --force: has no effect for `--size`.\n",
+        "   - --keep_state: preserves partial/processed state files.\n",
+        "   - Example: --size 5 -i ./in -o ./out\n\n",
+        "2) Restart mode (`--restart <SIZE> <BATCH>`)\n",
+        "   - Purpose: Resume from a specific input batch through\n",
+        "     size 18.\n",
+        "   - Input path (-i): source input directory for batches.\n",
+        "   - Output path (-o): target output directory (defaults\n",
+        "     to input if omitted).\n",
+        "   - --force: regenerates the baseline count file by\n",
+        "     scanning files before resuming.\n",
+        "   - --keep_state: preserved if provided.\n",
+        "   - Example: --restart 5 2 -i ./in -o ./out --force\n\n",
+        "3) Unitary mode (`--unitary <SIZE> <BATCH>`)\n",
+        "   - Purpose: Reprocess a single input batch to overwrite\n",
+        "     or fix outputs.\n",
+        "   - Input path (-i): dir containing the input batch.\n",
+        "   - Output path (-o): where regenerated outputs are\n",
+        "     written (defaults to input).\n",
+        "   - --force: regenerates count baseline first.\n",
+        "   - --keep_state: preserves state files for debugging.\n",
+        "   - Example: --unitary 7 0 -i ./in --force\n\n",
+        "4) Count mode (`--count <SIZE>`)\n",
+        "   - Purpose: Count existing files for a size and create a\n",
+        "     summary report.\n",
+        "   - Input path (-i): dir to read files to count (required).\n",
+        "   - Output path (-o): not used by this mode.\n",
+        "   - --force: forces a full rescan/regeneration before\n",
+        "     reporting.\n",
+        "   - --keep_state: affects whether intermediary files are\n",
+        "     preserved.\n",
+        "   - Example: --count 6 -i ./out --force\n\n",
+        "5) Check mode (`--check <SIZE>`)\n",
+        "   - Purpose: Verify repository integrity for an output\n",
+        "     size.\n",
+        "   - Input path (-i): not used.\n",
+        "   - Output path (-o): dir containing files to check\n",
+        "     (defaults to current dir).\n",
+        "   - --force/--keep_state: not applicable.\n",
+        "   - Example: --check 8 -o ./out\n\n",
+        "6) Compact mode (`--compact <SIZE>`)\n",
+        "   - Purpose: Consolidate many small output files into\n",
+        "     larger batches.\n",
+        "   - Input path (-i): dir containing files to compact.\n",
+        "   - Output path (-o): dir to write compacted files\n",
+        "     (defaults to input).\n",
+        "   - Example: --compact 12 -i ./out -o ./compacted\n\n",
+        "COMMON FLAGS: -i/--input-path, -o/--output-path, --force,\n",
+        "  --keep_state\n",
+        "  The sections above show how each flag affects specific\n",
+        "  modes (e.g. --force regenerates counts for --count,\n",
+        "  --restart and --unitary).\n"
+    )
+)]
 struct Args {
     /// Target size for the no-set lists (4-18 or range like 5-7)
-    /// 
-    /// If not provided, runs default behavior (creates seeds + sizes 4-18)
-    /// - Single size: "5" builds size 5 from size 4 files
-    /// - Range: "5-7" builds sizes 5, 6, and 7 sequentially
-    /// - Size 4: Builds from seed lists (size 3)
-    /// - Size 5+: Requires files from previous size
-    #[arg(short, long, conflicts_with_all = ["restart", "unitary"])]
+    #[arg(short, long, conflicts_with_all = ["restart", "unitary"], help = "Target size or range (4-18 or 5-7)")]
     size: Option<String>,
 
     /// Restart from specific input file: <SIZE> <BATCH>
-    /// 
-    /// SIZE refers to INPUT size. Processes from this batch onwards.
-    /// 
-    /// Examples:
-    ///   --restart 5 2   Load size 5 batch 2, continue through size 18
-    ///   --restart 7 0   Load size 7 batch 0, continue through size 18
-    /// 
-    /// By default, reads baseline from count file (nsl_{output_size:02}_global_count.txt)
-    /// Use --force to regenerate count file by scanning all files.
-    #[arg(long, num_args = 2, value_names = ["SIZE", "BATCH"], conflicts_with_all = ["size", "count", "unitary"])]
+    /// Processes from the given input batch onwards.
+    #[arg(long, num_args = 2, value_names = ["SIZE", "BATCH"], conflicts_with_all = ["size", "count", "unitary"], help = "Restart from specific input batch: SIZE BATCH")]
     restart: Option<Vec<u32>>,
 
     /// Process a single input batch (unitary processing): <SIZE> <BATCH>
-    /// 
-    /// SIZE refers to INPUT size. Processes ONLY this specific batch.
-    /// This is the ONLY canonical way to overwrite/fix defective files.
-    /// Output files from this batch will be regenerated.
-    /// 
-    /// Examples:
-    ///   --unitary 5 2   Reprocess size 5 batch 2 only (creates size 6)
-    ///   --unitary 7 0   Reprocess size 7 batch 0 only (creates size 8)
-    /// 
-    /// Use --force to regenerate count file first (recalculates baseline).
-    #[arg(long, num_args = 2, value_names = ["SIZE", "BATCH"], conflicts_with_all = ["size", "count", "restart"])]
+    /// Reprocesses exactly one input batch and regenerates outputs.
+    #[arg(long, num_args = 2, value_names = ["SIZE", "BATCH"], conflicts_with_all = ["size", "count", "restart"], help = "Process a single input batch: SIZE BATCH")]
     unitary: Option<Vec<u32>>,
 
-    /// Force regeneration of count file (affects --count, --restart and --unitary)
-    /// 
-    /// By default, restart/unitary modes and --count read existing count file.
-    /// This flag forces a full file scan to regenerate it first.
-    #[arg(long)]
+    /// Force regeneration of count file (affects --count, --restart and
+    /// --unitary)
+    #[arg(long, help = "Force regeneration of count file (affects --count, --restart and --unitary)")]
     force: bool,
 
     /// Keep partial and processed state files after a successful run
-    ///
-    /// By default these files are removed when the run completes successfully.
-    /// Use this flag to preserve them for debugging or incremental inspection.
-    #[arg(long)]
+    #[arg(long, help = "Keep partial and processed state files after a run")]
     keep_state: bool,
 
     /// Count existing files for a specific size and create summary report
-    /// 
-    /// Examples:
-    ///   --count 6   Count all size 6 files, create nsl_06_global_count.txt
-    /// 
-    /// Scans all files, counts lists, creates summary report
-    /// without processing any new lists
-    #[arg(long, conflicts_with_all = ["size", "restart", "unitary", "compact"])]
+    #[arg(long, conflicts_with_all = ["size", "restart", "unitary", "compact"], help = "Count files for a size and create a summary report")]
     count: Option<u8>,
 
     /// Compact small output files into larger batches: <SIZE>
-    /// 
-    /// SIZE refers to OUTPUT size to compact. Reads all files for this size,
-    /// consolidates into 10M-entry batches, replaces original files.
-    /// 
-    /// New filename: nsl_{size:02}c_batch_{batch:05}_from_{src:05}.rkyv
-    /// 
-    /// Examples:
-    ///   --compact 8   Compact all size 8 files into 10M-entry batches
-    ///   --compact 12  Compact all size 12 files into 10M-entry batches
-    /// 
-    /// Use when later processing creates many small files (ratio < 1.0).
-    /// Original files are preserved; compaction writes new files with a 'c' suffix.
-    #[arg(long, conflicts_with_all = ["size", "restart", "unitary", "count", "check"])]
+    /// Consolidates multiple small output files into larger batches.
+    #[arg(long, conflicts_with_all = ["size", "restart", "unitary", "count", "check"], help = "Compact small files into larger batches for a target size")]
     compact: Option<u8>,
 
     /// Check repository integrity for a specific size
-    /// 
-    /// SIZE refers to OUTPUT size to check. Analyzes files and count data:
-    /// - Lists missing output batches (should be continuous)
-    /// - Lists files in intermediary count files but missing from directory
-    /// 
-    /// Examples:
-    ///   --check 8   Check size 8 files for missing batches and files
-    ///   --check 12  Check size 12 repository integrity
-    /// 
-    /// Requires count files to exist (run --count first).
-    #[arg(long, conflicts_with_all = ["size", "restart", "unitary", "count", "compact"])]
+    /// Analyze files and count data for missing batches or files.
+    #[arg(long, conflicts_with_all = ["size", "restart", "unitary", "count", "compact"], help = "Check repository integrity for a specific size")]
     check: Option<u8>,
 
     /// Input directory path (optional)
-    /// 
-    /// Directory to read input files from.
-    /// 
-    /// Usage by mode:
-    /// - count: Only uses -i (reads files to count)
-    /// - check: Uses -o (repository to check)
-    /// - size/range: Uses -i for input, -o for output (if only one, both)
-    /// - unitary: Uses -i for input (writes to same dir unless -o given)
-    /// - restart: Uses -i for input, -o for output (if only one, both)
-    /// - compact: Uses -i for input files to compact
-    /// 
-    /// Examples:
-    ///   Windows: T:\data\funny_set_exploration
-    ///   Linux:   /mnt/nas/data/funny_set_exploration
-    ///   Relative: ./input
-    #[arg(short, long)]
+    /// Directory to read input files from; usage varies by mode.
+    #[arg(short, long, help = "Input directory path (optional)")]
     input_path: Option<String>,
 
     /// Output directory path (optional)
-    /// 
-    /// Directory to write output files to.
-    /// 
-    /// Usage by mode:
-    /// - count: Not used
-    /// - check: Uses for repository to check (default: current dir)
-    /// - size/range: Uses for output (if omitted, uses -i or current dir)
-    /// - unitary: Uses for output (if omitted, uses -i directory)
-    /// - restart: Uses for output (if omitted, uses -i or current dir)
-    /// - compact: Uses for compacted output files
-    /// 
-    /// Examples:
-    ///   Windows: T:\data\funny_set_exploration
-    ///   Linux:   /mnt/nas/data/funny_set_exploration
-    ///   Relative: ./output
-    #[arg(short, long)]
+    /// Directory to write output files to; usage varies by mode.
+    #[arg(short, long, help = "Output directory path (optional)")]
     output_path: Option<String>,
 }
 
