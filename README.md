@@ -4,18 +4,16 @@ A Rust-based exhaustive search algorithm to find all combinations of 12, 15, and
 
 ## Project Status
 
-**Current Version:** 0.4.7 (December 2025)
+**Current Version:** 0.4.8 (December 2025)
 
 **Key Features:**
 
-- **Input-intermediary files**: Automatic tracking of which output files came from which input batches
-- Restart capability with optimized filename-based batch discovery (Method 3)
+- **GlobalFileState**: In-memory state with atomic JSON/TXT persistence for O(1) file lookups
+- **Unified --size mode**: Single mode for both normal processing and restart from batch
+- **Incremental state saving**: JSON/TXT files updated after each output file is created
 - Dual input/output path support for safer processing
-- Enhanced count mode leveraging input-intermediary files for faster processing
 - Repository integrity checking (missing batches/files detection)
-- Human-readable intermediary files with atomic writes for reliability
- - Human-readable intermediary files with atomic writes for reliability
- - 6-digit batch numbering for scalability
+- 6-digit batch numbering for scalability
 - Continuous batch numbering across source files
 
 **Architecture:** Hybrid stack/heap implementation
@@ -29,8 +27,8 @@ A Rust-based exhaustive search algorithm to find all combinations of 12, 15, and
 - ✅ Hybrid implementation (stack compute + heap I/O)
 - ✅ Zero-copy serialization with rkyv (10-100x faster reads)
 - ✅ Memory-mapped file I/O for optimal performance
-- ✅ CLI support with size ranges (--size 5-7)
-- ✅ Extended size range support (4-18 cards)
+- ✅ Unified CLI with --size mode (supports restart from batch)
+- ✅ Extended size support (3-18 cards)
 - ✅ Batch file processing (20M entries per file, ~2GB each)
 - ✅ Configurable output directories (local, network, NAS support)
 - ✅ Progress tracking and formatted output
@@ -68,14 +66,11 @@ cargo build --release
 # Run with specific size
 ./target/release/funny_set_exploration --size 7
 
-# Run with size range
-./target/release/funny_set_exploration --size 5-7
-
 # Run with custom output directory
 ./target/release/funny_set_exploration --size 7 --output-path T:\data\funny_set_exploration
 
-# Restart from specific batch
-./target/release/funny_set_exploration --restart 5 2 -o T:\data\funny_set_exploration
+# Restart from specific input batch
+./target/release/funny_set_exploration --size 5 2 -i ./input -o ./output
 
 # Process single batch only (unitary mode - canonical way to fix defective files)
 ./target/release/funny_set_exploration --unitary 5 2 -o T:\data\funny_set_exploration
@@ -96,14 +91,10 @@ cargo build --release
 funny_set_exploration [OPTIONS]
 
 Options:
-  -s, --size <SIZE>
-          Target size to build (4-18 or range like 5-7)
+  -s, --size <SIZE> [BATCH]
+          Target output size to build (3-18), optional batch to restart from
           If omitted, runs default behavior (creates seeds + sizes 4-18)
-
-      --restart <SIZE> <BATCH>
-          Restart from specific input batch, continue through size 18
-          SIZE refers to INPUT size. Reads baseline from count file.
-          Use --force to regenerate count file first.
+          With BATCH: restart from specific input batch number
 
       --unitary <SIZE> <BATCH>
           Process only one specific input batch (unitary processing)
@@ -130,7 +121,7 @@ Options:
           Use the script `scripts/rename_intermediary_counts.ps1` to migrate existing intermediary files to the new naming scheme.
 
       --force
-          Force regeneration of count file (use with --count, --restart, or --unitary)
+          Force regeneration of count file (use with --count, --size BATCH, or --unitary)
 
   -o, --output-path <OUTPUT_PATH>
           Output directory path (optional)
@@ -157,7 +148,10 @@ Examples:
 
 ### Version History
 
-- **v0.4.1** (Current): Renamed modes for clarity, improved count file format
+- **v0.4.8** (Current): GlobalFileState with incremental JSON/TXT persistence, unified --size mode
+- **v0.4.7**: 6-digit batch formatting, input-intermediary tracking
+- **v0.4.6**: Added input-intermediary file generation and atomic writes
+- **v0.4.1**: Renamed modes for clarity, improved count file format
 - **v0.4.0**: Added restart capability with modular file naming
 - **v0.3.2**: Simplified to hybrid-only implementation
   - Removed v0.2.2 (heap-based) and v0.3.0 (stack-only)

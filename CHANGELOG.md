@@ -5,6 +5,30 @@ All notable changes to the funny_set_exploration project are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.8] - 2025-01-10
+
+### Added
+
+- **GlobalFileState**: In-memory state management with O(1) lookups
+  - Replaces file-based persistence with BTreeMap-backed in-memory state
+  - Loads state from JSON (fast) → TXT fallback → intermediary files → rkyv scan
+  - Incremental saves: JSON/TXT written after each output file creation
+  - Atomic persistence: Write to .tmp files then rename for crash safety
+
+### Changed
+
+- **Unified --size mode**: Merged --size and --restart into single mode
+  - `--size SIZE`: Build target size from size-1
+  - `--size SIZE BATCH`: Restart from specific input batch number
+  - Removed: `--restart` option (functionality merged into `--size`)
+  - Removed: Size range support (e.g., `--size 5-7`)
+
+### Fixed
+
+- Infinite loop bug: Added batch counter increment in process_batch_loop
+- Seed list creation: Fixed output directory (now writes to input_dir)
+- Incremental state saving: Moved flush() from batch loop to per-file save
+
 ## [0.4.7] - 2025-12-13
 
 ### Changed

@@ -1,28 +1,27 @@
 /// Manage the search for the grail of Set: combinations of 12 / 15 / 18 cards 
 /// with no sets
 ///
-/// Version 0.4.6 - Input-intermediary file generation and atomic writes
-/// Added: Automatic tracking of output files per input batch with atomic writes
+/// Version 0.4.8 - GlobalFileState with incremental JSON/TXT persistence
+/// Added: In-memory state with atomic JSON/TXT saves after each output file
 /// 
 /// CLI Usage:
-///   funny.exe --size 5 -o T:\data\funny_set_exploration              # Build size 5 from size 4
-///   funny.exe --size 5-7 -o T:\data\funny_set_exploration            # Build sizes 5, 6, and 7
-///   funny.exe --restart 5 2 -i .\input -o .\output                   # Restart with separate paths
-///   funny.exe --unitary 5 2 -o T:\data\funny_set_exploration         # Process only size 5 batch 2
-///   funny.exe --count 6 -o T:\data\funny_set_exploration             # Count size 6 files
-///   funny.exe --check 6 -o T:\data\funny_set_exploration             # Check size 6 integrity
-///   funny.exe                                                        # Default mode (sizes 4-18)
+///   funny.exe --size 3 -o .\output                          # Create seed lists (size 3)
+///   funny.exe --size 5 -i .\input -o .\output               # Build size 5 from size 4
+///   funny.exe --size 5 2 -i .\input -o .\output             # Restart size 5 from input batch 2
+///   funny.exe --unitary 5 2 -i .\input -o .\output          # Process only input batch 2
+///   funny.exe --count 6 -i .\output                         # Count size 6 files
+///   funny.exe --check 6 -o .\output                         # Check size 6 integrity
+///   funny.exe                                               # Default mode (sizes 4-18)
 ///
 /// Arguments:
-///   --size, -s <SIZE>        Target size to build (4-18, or range like 5-7)
-///                            If omitted, runs default behavior (creates seeds + sizes 4-18)
-///   --restart <SIZE> <BATCH>   Restart from specific input batch through size 18
+///   --size, -s <SIZE> [BATCH]  Target output size (3-18), optional batch to restart from
+///                              If omitted, runs default behavior (creates seeds + sizes 4-18)
 ///   --unitary <SIZE> <BATCH>   Process only one specific input batch (unitary processing)
 ///   --count <SIZE>             Count existing files and create summary report
 ///   --check <SIZE>             Check repository integrity (missing batches/files)
-///   --force                    Force regeneration of count file (with restart/unitary)
-///   --output-path, -o        Optional: Directory for output files
-///                            Defaults to current directory
+///   --force                    Force regeneration of count file (with size batch/unitary)
+///   --input-path, -i           Optional: Directory for input files (defaults to current)
+///   --output-path, -o          Optional: Directory for output files (defaults to input)
 ///
 /// Implementation:
 ///   - Hybrid approach: NoSetList (stack) for fast computation, NoSetListSerialized (heap) for compact I/O

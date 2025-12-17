@@ -1,15 +1,15 @@
-/// Version 0.4.6: Hybrid stack-optimized computation with heap-based I/O + Input-intermediary tracking
+/// Version 0.4.8: Hybrid stack-optimized computation with GlobalFileState persistence
 /// 
 /// This implementation combines the best of both worlds:
 /// - Uses NoSetList (stack arrays) for computation → 4-5× faster
 /// - Converts to NoSetListSerialized (heap Vecs) for I/O → compact 2GB files
-/// - Automatic input-intermediary file generation for output tracking
+/// - GlobalFileState with incremental JSON/TXT saves after each output file
 /// 
 /// Performance characteristics:
 /// - Computation: Same speed as v0.3.0 (stack-optimized)
 /// - File size: ~2GB per 20M batch (compact with size_32 rkyv)
 /// - Memory: Moderate (~12-15GB peak during conversion + save)
-/// - Tracking: Atomic writes ensure file integrity and restart reliability
+/// - Tracking: In-memory state with O(1) lookups, atomic JSON/TXT persistence
 ///
 /// This is the only active version of the project.
 
@@ -329,6 +329,11 @@ impl ListOfNSL {
                         file_size,
                         mtime,
                     );
+                    
+                    // Flush state immediately after saving each output file
+                    if let Err(e) = state.flush() {
+                        debug_print(&format!("Error flushing global state: {}", e));
+                    }
                 } else {
                     // Fallback to legacy buffer system
                     self.buffer_input_intermediary_line(self.new_output_batch, additional_new);
@@ -536,13 +541,8 @@ impl ListOfNSL {
 
                 self.process_one_file_of_current_size_n(max, state.as_deref_mut());
 
-                // Flush state or write legacy intermediary file
-                if let Some(ref mut s) = state {
-                    if let Err(e) = s.flush() {
-                        debug_print(&format!("Error flushing global state: {}", e));
-                    }
-                    test_print(&format!("   ... flushed global state (JSON/TXT)"));
-                } else {
+                // Write legacy intermediary file only if not using state
+                if state.is_none() {
                     let batch_width = 6;
                     let intermediary_filename = format!(
                         "no_set_list_input_intermediate_count_{:02}_{:0width$}.txt",
@@ -691,7 +691,7 @@ const COUNT_BATCH_SIZE: usize = 10;
 /// 
 /// This function uses an input-intermediary file system:
 /// 1. Input-intermediary files: nsl_{target_size:02}_intermediate_count_from_{input_size:02}_{input_batch:06}.txt
-///    - Created automatically during file generation (--size, --restart, --unitary modes and --compact)
+///    - Created automatically during file generation (--size, --unitary modes and --compact)
 ///    - One file per input batch, tracks which output files include lists from that input batch
 /// 
 /// File naming:

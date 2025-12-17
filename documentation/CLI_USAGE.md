@@ -2,7 +2,7 @@
 
 ## Overview
 
-Version 0.4.1 provides five operational modes: normal size processing, restart from specific batch, unitary processing (single batch - the only canonical way to fix defective files), count mode, and compact mode for consolidating small files. The program uses a hybrid stack/heap implementation for optimal performance.
+Version 0.4.8 provides four operational modes: size processing (with optional restart from specific batch), unitary processing (single batch - the only canonical way to fix defective files), count mode, and compact mode for consolidating small files. The program uses a hybrid stack/heap implementation with GlobalFileState for tracking.
 
 ## Running the Program
 
@@ -34,21 +34,9 @@ cargo run --release -- --size 4
 
 # Build size 7 from existing size 6 files
 cargo run --release -- --size 7
-```
 
-### CLI Mode: Size Range (v0.4.1+)
-
-Process multiple sizes in a single run:
-
-```powershell
-# Build sizes 5, 6, and 7 sequentially
-cargo run --release -- --size 5-7
-
-# Build sizes 8 through 10
-cargo run --release -- --size 8-10
-
-# Extended range (up to size 18)
-cargo run --release -- --size 10-12
+# Restart from specific input batch (e.g., size 5 from batch 2)
+cargo run --release -- --size 5 2
 ```
 
 ### Custom Output Directory
@@ -63,7 +51,7 @@ cargo run --release -- --size 7 -o "T:\data\funny_set_exploration"
 cargo run --release -- --size 7 -o "/mnt/nas/data/funny_set_exploration"
 
 # Relative path
-cargo run --release -- --size 5-7 -o "./output"
+cargo run --release -- --size 7 -o "./output"
 ```
 
 ## Command-Line Options
@@ -72,19 +60,15 @@ cargo run --release -- --size 5-7 -o "./output"
 funny_set_exploration [OPTIONS]
 
 Options:
-  -s, --size <SIZE>
-          Target size to build (4-18 or range like 5-7)
+  -s, --size <SIZE> [BATCH]
+          Target output size to build (3-18), optional batch to restart from
           
           If not provided, runs the default behavior (creates seeds + sizes 4-18)
           - Single size: "5" builds size 5 from size 4 files
-          - Range: "5-7" builds sizes 5, 6, and 7 sequentially
+          - With batch: "5 2" restarts from input batch 2
+          - Size 3: Creates seed lists
           - Size 4: Builds from seed lists (size 3)
           - Size 5+: Requires files from previous size
-
-      --restart <SIZE> <BATCH>
-          Restart from specific input batch, continue through size 18
-          SIZE refers to INPUT size
-          Reads baseline from count file (use --force to regenerate; also supported with --count)
 
       --unitary <SIZE> <BATCH>
           Process only one specific input batch (unitary processing)
@@ -97,7 +81,7 @@ Options:
           Creates nsl_{size:02}_global_count.txt summary report
 
       --force
-          Force regeneration of count file (use with --restart or --unitary)
+          Force regeneration of count file (use with --size BATCH or --unitary)
 
   -o, --output-path <OUTPUT_PATH>
           Output directory path (optional)
@@ -111,16 +95,16 @@ Options:
           Print help
 ```
 
-### Restart Mode
+### Restart from Specific Batch
 
-Resume processing from a specific batch:
+Resume processing from a specific input batch:
 
 ```powershell
-# Restart from input size 5 batch 2, continue through size 18
-cargo run --release -- --restart 5 2 -o "T:\data\funny_set_exploration"
+# Restart from input batch 2 (output size 5, reads from size 4 batch 2)
+cargo run --release -- --size 5 2 -i "./input" -o "./output"
 
 # Force regenerate count file before restart
-cargo run --release -- --restart 5 2 --force -o "T:\data\funny_set_exploration"
+cargo run --release -- --size 5 2 --force -i "./input" -o "./output"
 ```
 
 ### Unitary Mode
