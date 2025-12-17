@@ -1,0 +1,20 @@
+
+
+================================================================================
+                         Funny Set Exploration [0.4.7]                          
+================================================================================
+
+
+
+Counting files for size 15...
+   Input directory: X:\funny\14_to_15c
+   ... Found 23 intermediary input count files
+   ... reading batches: 000000 000001 000002 000003 000004 000005 000006 000007 000008 000009
+   ... reading batches: 000010 000011 000012 000013 000014 000015 000016 000017 000018 000019
+   ... reading batches: 000020 000021 000022
+
+   ... Consolidating 23 intermediary input count files...
+
+Count completed in 0.12 seconds
+
+Count completed successfully!
