@@ -36,6 +36,7 @@ mod io_helpers;
 mod filenames;
 mod compaction;
 mod list_of_nsl;
+mod file_info;
 
 use clap::Parser;
 use separator::Separatable;
@@ -94,13 +95,19 @@ use crate::utils::*;
         "     (defaults to current dir).\n",
         "   - --force/--keep_state: not applicable.\n",
         "   - Example: --check 8 -o ./out\n\n",
-        "6) Compact mode (`--compact <SIZE>`)\n",
+        "6) Compact mode (`--compact <SIZE>`)",
         "   - Purpose: Consolidate many small output files into\n",
         "     larger batches.\n",
         "   - Input path (-i): dir containing files to compact.\n",
         "   - Output path (-o): dir to write compacted files\n",
         "     (defaults to input).\n",
         "   - Example: --compact 12 -i ./out -o ./compacted\n\n",
+        "7) Legacy-count mode (`--legacy-count <SIZE>` )\n",
+        "   - Purpose: Read existing global/intermediary counts and\n",
+        "     emit nsl_{size}_global_info.json/.txt without\n",
+        "     recomputing intermediaries.\n",
+        "   - Input path (-i): directory with count files (.txt).\n",
+        "   - Output path: not used.\n\n",
         "COMMON FLAGS: -i/--input-path, -o/--output-path, --force,\n",
         "  --keep_state\n",
         "  The sections above show how each flag affects specific\n",
@@ -133,8 +140,12 @@ struct Args {
     keep_state: bool,
 
     /// Count existing files for a specific size and create summary report
-    #[arg(long, conflicts_with_all = ["size", "restart", "unitary", "compact"], help = "Count files for a size and create a summary report")]
+    #[arg(long, conflicts_with_all = ["size", "restart", "unitary", "compact", "legacy_count"], help = "Count files for a size and create a summary report")]
     count: Option<u8>,
+
+    /// Legacy count: read existing global/intermediary counts and emit global info JSON/TXT
+    #[arg(long, conflicts_with_all = ["size", "restart", "unitary", "count", "compact", "check"], help = "Legacy count: emit global info JSON/TXT from existing count files")]
+    legacy_count: Option<u8>,
 
     /// Compact small output files into larger batches: <SIZE>
     /// Consolidates multiple small output files into larger batches.
@@ -204,6 +215,7 @@ struct ProcessingConfig {
 #[derive(Debug)]
 enum ProcessingMode {
     Count { size: u8 },
+    LegacyCount { size: u8 },
     Check { size: u8 },
     Compact { size: u8 },
     Restart { size: u8, batch: u32 },
@@ -217,6 +229,7 @@ impl ProcessingMode {
     fn requires_logging(&self) -> bool {
         matches!(self, 
             ProcessingMode::Count { .. } | 
+            ProcessingMode::LegacyCount { .. } |
             ProcessingMode::Check { .. } | 
             ProcessingMode::Compact { .. })
     }
@@ -250,6 +263,9 @@ fn resolve_paths(
     match mode {
         ProcessingMode::Count { .. } => {
             // Count only uses input
+            (input_arg.unwrap_or(".").to_string(), String::new())
+        },
+        ProcessingMode::LegacyCount { .. } => {
             (input_arg.unwrap_or(".").to_string(), String::new())
         },
         ProcessingMode::Check { .. } => {
@@ -310,6 +326,9 @@ fn build_config(args: &Args, max_per_file: u64) -> Result<ProcessingConfig, Stri
     let mode = if let Some(compact_size) = args.compact {
         validate_size(compact_size, "Compact", 3, 18)?;
         ProcessingMode::Compact { size: compact_size }
+    } else if let Some(legacy_size) = args.legacy_count {
+        validate_size(legacy_size, "Legacy-count", 3, 18)?;
+        ProcessingMode::LegacyCount { size: legacy_size }
     } else if let Some(check_size) = args.check {
         validate_size(check_size, "Check", 3, 18)?;
         ProcessingMode::Check { size: check_size }
@@ -362,6 +381,9 @@ fn build_config(args: &Args, max_per_file: u64) -> Result<ProcessingConfig, Stri
 /// Execute the appropriate mode based on configuration
 fn execute_mode(config: &ProcessingConfig) -> Result<String, String> {
     use crate::list_of_nsl::{count_size_files, compact_size_files, check_size_files};
+    use crate::file_info::{GlobalFileInfo};
+    use std::path::Path;
+    use std::fs;
     
     match &config.mode {
         ProcessingMode::Count { size } => {
@@ -369,6 +391,38 @@ fn execute_mode(config: &ProcessingConfig) -> Result<String, String> {
             count_size_files(&config.input_dir, *size, config.force_recount, config.keep_state)
                 .map_err(|e| format!("Error during count: {}", e))?;
             Ok("Count completed successfully".to_string())
+        },
+
+        ProcessingMode::LegacyCount { size } => {
+            let base = &config.input_dir;
+            let primary = Path::new(base).join(format!("nsl_{:02}_global_count.txt", size));
+            let legacy_space = Path::new(base).join(format!("nsl_{:02}_global count.txt", size));
+            let global_path = if primary.exists() {
+                Some(primary)
+            } else if legacy_space.exists() {
+                Some(legacy_space)
+            } else {
+                None
+            };
+
+            let gfi_res = if let Some(path) = global_path {
+                test_print(&format!("Reading existing global count {}", path.display()));
+                GlobalFileInfo::from_global_count_file(&path)
+            } else {
+                test_print("Global count not found; reading intermediary files or scanning rkyv files...");
+                GlobalFileInfo::from_intermediary_files(base, *size)
+            };
+
+            let mut gfi = gfi_res.map_err(|e| format!("Error loading counts: {}", e))?;
+            let json_path = Path::new(base).join(format!("nsl_{:02}_global_info.json", size));
+            let txt_path = Path::new(base).join(format!("nsl_{:02}_global_info.txt", size));
+
+            gfi.save_json(&json_path).map_err(|e| format!("Error writing {}: {}", json_path.display(), e))?;
+            let txt_body = gfi.to_txt(base, *size);
+            fs::write(&txt_path, txt_body).map_err(|e| format!("Error writing {}: {}", txt_path.display(), e))?;
+
+            test_print(&format!("Wrote {} and {}", json_path.display(), txt_path.display()));
+            Ok("Legacy global info written".to_string())
         },
         
         ProcessingMode::Check { size } => {
