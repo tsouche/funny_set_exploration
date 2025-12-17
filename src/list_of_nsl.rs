@@ -690,9 +690,10 @@ pub fn count_size_files(base_path: &str, target_size: u8, force: bool, keep_stat
     all_files.sort();
     
     // Step 2: Find all intermediary input count files for this size
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashSet};
     let mut intermediary_files: Vec<String> = Vec::new();
-    let mut all_file_info: BTreeMap<(u32, u32), (String, u64)> = BTreeMap::new();
+    let mut all_file_info: BTreeMap<(u32, u32), (String, u64, bool)> = BTreeMap::new();
+    let mut seen_files: HashSet<String> = HashSet::new();
 
     // Find all input-intermediary files for this target size: nsl_{target}_intermediate_count_from_{source}_*.txt
     // Also accept legacy 'no_set_list_input_intermediate_count_{source}_*.txt' for robustness
@@ -708,6 +709,50 @@ pub fn count_size_files(base_path: &str, target_size: u8, force: bool, keep_stat
     }
     intermediary_files.sort();
 
+    // Build a map of available source batches from discovered intermediary files
+    let mut intermediary_batches: HashSet<u32> = HashSet::new();
+    for inter in &intermediary_files {
+        if let Some(batch_str) = inter.rsplit('_').next().and_then(|s| s.strip_suffix(".txt")) {
+            if let Ok(b) = batch_str.parse::<u32>() {
+                intermediary_batches.insert(b);
+            }
+        }
+    }
+
+    // Build groups of .rkyv files by source batch so we can fill in missing intermediaries
+    let mut groups: BTreeMap<u32, Vec<std::path::PathBuf>> = BTreeMap::new();
+    let source_size = target_size - 1;
+    for path in &all_files {
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            if let Some(to_pos) = name.find("_to_") {
+                let before_to = &name[..to_pos];
+                if let Some(src_batch_pos) = before_to.rfind("_batch_") {
+                    let src_batch_str = &before_to[src_batch_pos + 7..];
+                    if let Ok(src_batch) = src_batch_str.parse::<u32>() {
+                        groups.entry(src_batch).or_default().push(path.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    // Create missing intermediary files (when some exist but specific batches are absent)
+    for (src_batch, files) in &groups {
+        if intermediary_batches.contains(src_batch) {
+            continue;
+        }
+        let inter_filename = format!("{}/nsl_{:02}_intermediate_count_from_{:02}_{:06}.txt", base_path, target_size, source_size, src_batch);
+        test_print(&format!("   ... creating missing intermediary file {}", inter_filename));
+        match create_input_intermediary_from_files(files, &inter_filename) {
+            Ok(_) => {
+                intermediary_files.push(inter_filename.clone());
+                intermediary_batches.insert(*src_batch);
+            }
+            Err(e) => debug_print(&format!("   ... Error creating {}: {}", inter_filename, e)),
+        }
+    }
+
+    intermediary_files.sort();
     progress_print(&format!("   ... Found {} intermediary input count files", intermediary_files.len()));
 
     // If no intermediary files found, create them by grouping .rkyv files by source_batch
@@ -832,15 +877,34 @@ pub fn count_size_files(base_path: &str, target_size: u8, force: bool, keep_stat
                             // Parse source and target batch numbers from filename
                             if let Some(to_pos) = filename.find("_to_") {
                                 let before_to = &filename[..to_pos];
-                                let after_to = &filename[to_pos + 4..];
+                                let after_raw = &filename[to_pos + 4..];
+                                // strip suffix for both compacted and non-compacted names
+                                let after_to = if let Some(stripped) = after_raw.strip_suffix("_compacted.rkyv") {
+                                    stripped
+                                } else if let Some(stripped) = after_raw.strip_suffix(".rkyv") {
+                                    stripped
+                                } else {
+                                    after_raw
+                                };
                                 if let Some(src_batch_pos) = before_to.rfind("_batch_") {
                                     let src_batch_str = &before_to[src_batch_pos + 7..];
                                     if let Ok(srcb) = src_batch_str.parse::<u32>() {
                                         if let Some(tgt_batch_pos) = after_to.rfind("_batch_") {
-                                            let tgt_batch_str = &after_to[tgt_batch_pos + 7..after_to.len() - 5]; // -5 for ".rkyv"
+                                            let tgt_batch_str = &after_to[tgt_batch_pos + 7..];
                                             if let Ok(tgtb) = tgt_batch_str.parse::<u32>() {
+                                                let is_compacted = filename.contains("_compacted.rkyv");
+                                                let full_path = format!("{}/{}", base_path, filename);
+                                                if !std::path::Path::new(&full_path).exists() {
+                                                    debug_print(&format!("   ... skipping missing file referenced in intermediary: {}", filename));
+                                                    continue;
+                                                }
+                                                if seen_files.contains(filename) {
+                                                    debug_print(&format!("   ... skipping duplicate reference to {}", filename));
+                                                    continue;
+                                                }
+                                                seen_files.insert(filename.to_string());
                                                 // Insert into in-memory map
-                                                all_file_info.insert((srcb, tgtb), (filename.to_string(), count));
+                                                all_file_info.insert((srcb, tgtb), (filename.to_string(), count, is_compacted));
                                             }
                                         }
                                     }
@@ -904,15 +968,16 @@ pub fn count_size_files(base_path: &str, target_size: u8, force: bool, keep_stat
     // Compute cumulative totals and generate report text in-memory
     let mut cumulative = cumulative_so_far;
     let mut report_lines: Vec<String> = Vec::with_capacity(sorted_files.len());
-    for ((source_batch, target_batch), (filename, count)) in sorted_files.iter() {
+    for ((source_batch, target_batch), (filename, count, compacted)) in sorted_files.iter() {
         cumulative += count;
         report_lines.push(format!(
-            "{:06} {:06} | {:>15} | {:>15} | {}",
+            "{:06} {:06} | {:>15} | {:>15} | {} | {}",
             source_batch,
             target_batch,
             cumulative.separated_string(),
             count.separated_string(),
-            filename
+            filename,
+            if *compacted { "compacted" } else { "" }
         ));
     }
 
@@ -924,7 +989,7 @@ pub fn count_size_files(base_path: &str, target_size: u8, force: bool, keep_stat
     report_text.push_str(&format!("# Intermediary files used: {} batch files\n", intermediary_files.len()));
     report_text.push_str("# Format: source_batch target_batch | cumulative_nb_lists | nb_lists_in_file | filename | compacted\n");
     report_text.push_str("#\n");
-    for line in report_lines.iter().rev() {
+    for line in report_lines.iter() {
         report_text.push_str(line);
         report_text.push('\n');
     }

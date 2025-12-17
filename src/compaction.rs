@@ -28,165 +28,113 @@ fn save_compacted_batch_atomic(filepath: &str, lists: &[NoSetListSerialized]) ->
     // fsync
     let f = std::fs::File::open(&tmp)?;
     f.sync_all()?;
-    // Remove existing target (Windows requires remove before rename)
-    if path.exists() { let _ = std::fs::remove_file(path); }
-    std::fs::rename(&tmp, path)?;
-    Ok(())
+
+    // Try atomic rename with retries (backoff) to handle transient Windows/SMB locks
+    let mut renamed = false;
+    for attempt in 0..5 {
+        // Remove existing target (Windows requires remove before rename)
+        if path.exists() { let _ = std::fs::remove_file(path); }
+        match std::fs::rename(&tmp, path) {
+            Ok(()) => { renamed = true; break; }
+            Err(e) => {
+                debug_print(&format!("atomic rename attempt {} failed for {}: {:?}", attempt + 1, filepath, e));
+                std::thread::sleep(std::time::Duration::from_millis(200 * (attempt + 1)));
+            }
+        }
+    }
+
+    if renamed {
+        return Ok(());
+    }
+
+    // If we reach here, rename failed persistently. Try fallback: write final file via serializer,
+    // then remove the tmp file if fallback succeeded.
+    debug_print(&format!("atomic rename failed persistently for {}; attempting fallback write", filepath));
+    if crate::io_helpers::save_to_file_serialized(&lists_vec, filepath) {
+        // fallback succeeded; remove tmp and return Ok
+        let _ = std::fs::remove_file(&tmp);
+        test_print(&format!("   Wrote compacted file (fallback) {}", filepath));
+        return Ok(());
+    }
+
+    // Fallback also failed; leave tmp for inspection and return error
+    debug_print(&format!("fallback write also failed for {} — leaving tmp file {} for inspection", filepath, tmp.display()));
+    Err(std::io::Error::new(std::io::ErrorKind::Other, "Atomic rename and fallback write both failed"))
 }
 
-/// Compact small output files into larger batches (idempotent and safe)
+/// Compact exactly one batch in-place using the global count file as the plan.
+/// - In-place only (input_dir == output_dir).
+/// - No temp files: writes the compacted file directly with `save_to_file_serialized`.
+/// - Idempotent: if the chosen compacted output already exists, the function exits without
+///   modifying origins. After successfully creating the compacted file, intermediary and
+///   global count files are updated to reflect the new state.
 pub fn compact_size_files(input_dir: &str, output_dir: &str, target_size: u8, batch_size: u64) -> std::io::Result<()> {
-    use std::io::Write;
-    test_print(&format!("\nCompacting files for size {:02}...", target_size));
+    test_print(&format!("\nCompacting files for size {:02} (single batch)...", target_size));
     test_print(&format!("Target batch size: {} lists per file", batch_size.separated_string()));
 
     let start_time = std::time::Instant::now();
 
-    // Enforce in-place compaction: input_dir and output_dir must be identical
     if input_dir != output_dir {
-        test_print(&format!("Compaction must run in-place. Use the same directory for input and output: {}", input_dir));
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Compaction requires in-place input/output (use same directory)"));
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Compaction is in-place only (input must equal output)"));
     }
 
-    // Build plan using existing global count if present, otherwise intermediary files
+    // Parse the consolidated global count file to build the ordered list of non-compacted inputs
     let report_filename = format!("{}/nsl_{:02}_global_count.txt", input_dir, target_size);
-    let mut file_counts: Vec<(String, u64, u32, u32)> = Vec::new();
-    let mut total_lists = 0u64;
-
+    let mut plan: Vec<(String, u64, u32, u32)> = Vec::new(); // (filename, count, src_batch, tgt_batch)
     if Path::new(&report_filename).exists() {
-        test_print(&format!("   Found consolidated count file: {}", report_filename));
         use std::io::{BufRead, BufReader};
         let file = fs::File::open(&report_filename)?;
         let reader = BufReader::new(file);
         for line in reader.lines() {
             let line = line?;
-            if line.trim().is_empty() || line.trim().starts_with('#') { continue; }
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') { continue; }
             let parts: Vec<&str> = line.split('|').collect();
-            if parts.len() >= 4 {
-                let src_tgt = parts[0].trim();
-                let fields: Vec<&str> = src_tgt.split_whitespace().collect();
-                if fields.len() >= 2 {
-                    if let (Ok(src), Ok(tgt)) = (fields[0].parse::<u32>(), fields[1].parse::<u32>()) {
-                        let count_str = parts[2].trim();
-                        let digits_only: String = count_str.chars().filter(|c| c.is_ascii_digit()).collect();
-                        if let Ok(count) = digits_only.parse::<u64>() {
-                            let filename = parts[3].trim().to_string();
-                            // Compact flag is optional (backwards compatible). If present use parts[4].
-                            let mut is_compacted = filename.contains("_compacted.rkyv");
-                            if parts.len() >= 5 {
-                                let flag = parts[4].trim().to_lowercase();
-                                if flag == "true" || flag == "yes" || flag == "1" {
-                                    is_compacted = true;
-                                } else if flag == "false" || flag == "no" || flag == "0" {
-                                    is_compacted = false;
-                                }
-                            }
-                            // Only include non-compacted files in the compaction plan
-                            if !is_compacted {
-                                file_counts.push((filename, count, src, tgt));
-                                total_lists += count;
-                            }
-                        }
-                    }
-                }
+            if parts.len() < 4 { continue; }
+            let src_tgt = parts[0].trim();
+            let fields: Vec<&str> = src_tgt.split_whitespace().collect();
+            if fields.len() < 2 { continue; }
+            let (Ok(src), Ok(tgt)) = (fields[0].parse::<u32>(), fields[1].parse::<u32>()) else { continue; };
+            let count_str = parts[2].trim();
+            let digits_only: String = count_str.chars().filter(|c| c.is_ascii_digit()).collect();
+            let Ok(count) = digits_only.parse::<u64>() else { continue; };
+            let filename = parts[3].trim().to_string();
+            let mut is_compacted = filename.contains("_compacted.rkyv");
+            if parts.len() >= 5 {
+                let flag = parts[4].trim().to_lowercase();
+                if flag == "true" || flag == "yes" || flag == "1" { is_compacted = true; }
+                if flag == "false" || flag == "no" || flag == "0" { is_compacted = false; }
+            }
+            if !is_compacted {
+                plan.push((filename, count, src, tgt));
             }
         }
     }
 
-    // Debug: print plan order as parsed (src,tgt)
-    debug_print(&format!("compaction: parsed {} files, order: {:?}", file_counts.len(), file_counts.iter().map(|f| (f.2, f.3)).collect::<Vec<_>>()));
-
-    // If no consolidated counts, fallback to intermediary input files
-    if file_counts.is_empty() {
-        let prev_size = target_size - 1;
-        let pattern = format!("no_set_list_input_intermediate_count_{:02}_", prev_size);
-        let mut intermediary_files: Vec<String> = Vec::new();
-        for entry in fs::read_dir(input_dir)? {
-            if let Ok(entry) = entry {
-                if let Some(name) = entry.file_name().to_str() {
-                    if name.starts_with(&pattern) && name.ends_with(".txt") {
-                        intermediary_files.push(format!("{}/{}", input_dir, name));
-                    }
-                }
-            }
-        }
-        intermediary_files.sort();
-        if !intermediary_files.is_empty() {
-            test_print(&format!("   Building plan from {} intermediary input count files", intermediary_files.len()));
-            use std::io::{BufRead, BufReader};
-            for inter in intermediary_files {
-                let file = fs::File::open(&inter)?;
-                let reader = BufReader::new(file);
-                for line in reader.lines() {
-                    let line = line?;
-                    if line.trim().starts_with("...") {
-                        let parts: Vec<&str> = line.split_whitespace().collect();
-                        if parts.len() >= 5 {
-                            if let Ok(count) = parts[1].parse::<u64>() {
-                                let filename = parts[4].to_string();
-                                if let Some(to_pos) = filename.find("_to_") {
-                                    let before_to = &filename[..to_pos];
-                                    let after_to = &filename[to_pos + 4..];
-                                    if let Some(src_batch_pos) = before_to.rfind("_batch_") {
-                                        let src_batch_str = &before_to[src_batch_pos + 7..];
-                                        if let Ok(src_batch) = src_batch_str.parse::<u32>() {
-                                            if let Some(tgt_batch_pos) = after_to.rfind("_batch_") {
-                                                let tgt_batch_str = &after_to[tgt_batch_pos + 7..after_to.len() - 5];
-                                                if let Ok(tgt_batch) = tgt_batch_str.parse::<u32>() {
-                                                    file_counts.push((filename, count, src_batch, tgt_batch));
-                                                    total_lists += count;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            file_counts.sort_by(|a, b| match a.3.cmp(&b.3) { std::cmp::Ordering::Equal => a.2.cmp(&b.2), other => other });
-        }
-    }
-
-    // Ensure plan is ordered by target_batch then source_batch (ascending)
-    file_counts.sort_by(|a, b| match a.3.cmp(&b.3) { std::cmp::Ordering::Equal => a.2.cmp(&b.2), other => other });
-
-    if file_counts.is_empty() {
-        test_print("   No consolidated or intermediary count files found. Run --count <SIZE> first to generate counts.");
+    // If no plan from global count, nothing to do
+    if plan.is_empty() {
+        test_print("   No non-compacted entries found in global count; nothing to compact.");
         return Ok(());
     }
 
-    test_print(&format!("\n   Total lists accounted for in plan: {}", total_lists.separated_string()));
+    // Order by target_batch then source_batch (ascending) to match previous behavior
+    plan.sort_by(|a, b| match a.3.cmp(&b.3) { std::cmp::Ordering::Equal => a.2.cmp(&b.2), other => other });
 
-    const READ_CHUNK_SIZE: usize = 2_000_000;
-
-    if !Path::new(output_dir).exists() { fs::create_dir_all(output_dir)?; }
-
-    let expected_compacted_files = ((total_lists + batch_size - 1) / batch_size) as usize;
-    test_print(&format!("\n   Plan: Create ~{} compacted files (batch size {}) from {} input files", expected_compacted_files, batch_size.separated_string(), file_counts.len()));
-
-    let source_size = target_size - 1;
-
-    // Determine starting compact batch by scanning existing compacted files only.
-    // Start at 0 if none found so compacted outputs are numbered from 000000 upwards.
-    let mut current_compact_batch: u32 = 0;
+    // Determine next compacted batch index by scanning existing compacted files
+    let mut next_compact_idx: u32 = 0;
     if let Ok(entries) = std::fs::read_dir(output_dir) {
-        let mut max_compacted: Option<u32> = None;
+        let mut max_idx: Option<u32> = None;
         for entry in entries.flatten() {
             if let Some(name) = entry.file_name().to_str() {
                 if name.ends_with("_compacted.rkyv") && name.contains(&format!("_to_{:02}_batch_", target_size)) {
                     if let Some(to_pos) = name.find("_to_") {
-                        // extract after 'to_'
                         let after_to = &name[to_pos + 4..];
                         if let Some(batch_pos) = after_to.rfind("_batch_") {
-                            // batch number runs until "_compacted.rkyv"
                             let start = batch_pos + 7;
                             let end = after_to.len() - "_compacted.rkyv".len();
                             if end > start && end <= after_to.len() {
-                                let batch_str = &after_to[start..end];
-                                if let Ok(num) = batch_str.parse::<u32>() {
-                                    max_compacted = Some(max_compacted.map_or(num, |m| m.max(num)));
+                                if let Ok(num) = after_to[start..end].parse::<u32>() {
+                                    max_idx = Some(max_idx.map_or(num, |m| m.max(num)));
                                 }
                             }
                         }
@@ -194,126 +142,144 @@ pub fn compact_size_files(input_dir: &str, output_dir: &str, target_size: u8, ba
                 }
             }
         }
-        if let Some(m) = max_compacted { current_compact_batch = m + 1; }
+        if let Some(m) = max_idx { next_compact_idx = m + 1; }
     }
-    let mut current_output_buffer: Vec<NoSetListSerialized> = Vec::new();
-    let mut current_last_source: Option<u32> = None;
-    let mut current_output_contribs: Vec<(u32, u64)> = Vec::new();
-    let mut files_created = 0usize;
 
-    // Helper to flush buffer into a compacted file (safely and idempotently)
-    let flush_current = |output_dir: &str,
-                         target_size: u8,
-                         batch_idx: u32,
-                         last_source_batch: Option<u32>,
-                         buffer: &mut Vec<NoSetListSerialized>,
-                         contribs: &[(u32, u64)],
-                         input_dir: &str,
-                         source_size: u8|
-                         -> std::io::Result<()> {
-        if buffer.is_empty() { return Ok(()); }
-        // Determine new input batch as the LAST contributing source batch per spec
-        let from_src = last_source_batch.unwrap_or_else(|| if !contribs.is_empty() { contribs.last().unwrap().0 } else { 0 });
-        // If buffer is a full batch, mark as compacted; otherwise final partial file remains non-compacted
-        let is_full = (buffer.len() as u64) >= batch_size;
-        let filename = if is_full {
-            format!("{}/nsl_{:02}_batch_{:06}_to_{:02}_batch_{:06}_compacted.rkyv", output_dir, source_size, from_src, target_size, batch_idx)
-        } else {
-            format!("{}/nsl_{:02}_batch_{:06}_to_{:02}_batch_{:06}.rkyv", output_dir, source_size, from_src, target_size, batch_idx)
-        };
+    // Accumulate lists up to batch_size
+    let mut buffer: Vec<NoSetListSerialized> = Vec::new();
+    let mut contribs: Vec<(u32, u64)> = Vec::new();
+    let mut touched_files: Vec<(String, usize, usize, u32)> = Vec::new(); // (path, consumed, total, src_batch)
+    let source_size = target_size - 1;
+    const READ_CHUNK_SIZE: usize = 2_000_000;
 
-        // If target file already exists, assume it's correct and skip (idempotent)
-        if Path::new(&filename).exists() {
-            test_print(&format!("   Skipping existing compacted file {}", filename));
-        } else {
-            test_print(&format!("   Writing compacted file {} ({} lists)", filename, buffer.len().separated_string()));
-            save_compacted_batch_atomic(&filename, buffer)?;
-        }
+    for (fname, _count, src_batch, _tgt_batch) in plan.iter() {
+        if buffer.len() as u64 >= batch_size { break; }
+        let path = format!("{}/{}", input_dir, fname);
+        let mut all_lists = crate::io_helpers::load_lists_from_file(&path)?;
+        let total = all_lists.len();
+        let mut consumed = 0usize;
 
-        // Append intermediary count files to input directory for provenance (idempotent append)
-        use std::fs::OpenOptions;
-        for (src_batch, cnt) in contribs {
-            let inter_filename = format!("{}/nsl_{:02}_intermediate_count_from_{:02}_{:06}.txt", input_dir, target_size, source_size, src_batch);
-            if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&inter_filename) {
-                if let Err(e) = writeln!(f, "   ... {:>8} lists in {}", cnt, Path::new(&filename).file_name().unwrap().to_string_lossy()) {
-                    debug_print(&format!("compact: Error writing intermediary {}: {}", inter_filename, e));
-                } else {
-                    test_print(&format!("   ... appended {} lists -> {}", cnt.separated_string(), inter_filename));
-                }
+        while consumed < total && (buffer.len() as u64) < batch_size {
+            let take = std::cmp::min(READ_CHUNK_SIZE, total - consumed);
+            let chunk = &all_lists[consumed..consumed + take];
+            let space_left = (batch_size as usize) - buffer.len();
+            let take_now = std::cmp::min(space_left, chunk.len());
+            buffer.extend_from_slice(&chunk[..take_now]);
+            consumed += take_now;
+
+            // track contribs
+            if let Some(entry) = contribs.iter_mut().find(|e| e.0 == *src_batch) {
+                entry.1 += take_now as u64;
             } else {
-                debug_print(&format!("compact: Error opening intermediary {} for append", inter_filename));
+                contribs.push((*src_batch, take_now as u64));
             }
         }
 
-        buffer.clear();
-        Ok(())
+        touched_files.push((path, consumed, total, *src_batch));
+        if consumed > 0 {
+            test_print(&format!("   Copied {:>10} lists from {}", consumed.separated_string(), fname));
+        }
+    }
+
+    if buffer.is_empty() {
+        test_print("   Nothing to compact (batch_size already met by existing compacts or no input)." );
+        return Ok(());
+    }
+
+    // Determine output filename using the last contributor src batch
+    let from_src = contribs.last().map(|c| c.0).unwrap_or(0);
+    let is_full = (buffer.len() as u64) >= batch_size;
+    let output_filename = if is_full {
+        format!("{}/nsl_{:02}_batch_{:06}_to_{:02}_batch_{:06}_compacted.rkyv", output_dir, source_size, from_src, target_size, next_compact_idx)
+    } else {
+        format!("{}/nsl_{:02}_batch_{:06}_to_{:02}_batch_{:06}.rkyv", output_dir, source_size, from_src, target_size, next_compact_idx)
     };
 
-    // Process each input file in plan order
-    for (base_name, _count, src_batch, _tgt_batch) in &file_counts {
-        let filepath = format!("{}/{}", input_dir, base_name);
-        test_print(&format!("\n   Processing input file {}", base_name));
+    // Idempotent skip if already exists
+    if Path::new(&output_filename).exists() {
+        test_print(&format!("   Skipping existing compacted file {}", output_filename));
+        return Ok(());
+    }
 
-        let file = fs::File::open(&filepath)?;
-        let mmap = unsafe { Mmap::map(&file)? };
-        let archived = match check_archived_root::<Vec<NoSetListSerialized>>(&mmap[..]) {
-            Ok(a) => a,
-            Err(e) => {
-                eprintln!("   Error validating {}: {:?}", base_name, e);
-                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Archive validation failed"));
-            }
-        };
-        let total = archived.len();
-        let mut idx = 0usize;
+    test_print(&format!("   Writing compacted file {} ({} lists)", output_filename, buffer.len().separated_string()));
+    if !crate::io_helpers::save_to_file_serialized(&buffer, &output_filename) {
+        return Err(std::io::Error::new(std::io::ErrorKind::Other, "Failed to write compacted file"));
+    }
 
-        while idx < total {
-            let take = std::cmp::min(READ_CHUNK_SIZE, total - idx);
-            let mut chunk: Vec<NoSetListSerialized> = Vec::with_capacity(take);
-            for i in idx..(idx + take) {
-                let archived_elem = archived.get(i).expect("index in range");
-                let des: NoSetListSerialized = archived_elem.deserialize(&mut rkyv::Infallible).expect("deserialization");
-                chunk.push(des);
-            }
-            idx += take;
-
-            let mut chunk_idx = 0usize;
-            while chunk_idx < chunk.len() {
-                let space_left = (batch_size as usize) - current_output_buffer.len();
-                let take_now = std::cmp::min(space_left, chunk.len() - chunk_idx);
-
-                if current_last_source.is_none() { current_last_source = Some(*src_batch); } else { current_last_source = Some(*src_batch); }
-                let mut found = false;
-                for entry in current_output_contribs.iter_mut() {
-                    if entry.0 == *src_batch { entry.1 += take_now as u64; found = true; break; }
-                }
-                if !found { current_output_contribs.push((*src_batch, take_now as u64)); }
-
-                current_output_buffer.extend(chunk[chunk_idx..chunk_idx + take_now].iter().cloned());
-                chunk_idx += take_now;
-
-                if current_output_buffer.len() as u64 >= batch_size {
-                    flush_current(output_dir, target_size, current_compact_batch, current_last_source, &mut current_output_buffer, &current_output_contribs, input_dir, source_size)?;
-                    files_created += 1;
-                    current_compact_batch += 1;
-                    current_last_source = None;
-                    current_output_contribs.clear();
-                }
+    // Apply deletions/rewrites after successful write
+    for (path, consumed, total, _src_batch) in touched_files.iter() {
+        if *consumed >= *total {
+            test_print(&format!("   Origin file {} fully consumed; deleting", path));
+            let _ = std::fs::remove_file(path);
+        } else {
+            test_print(&format!("   Origin file {} partially consumed; rewriting {} remaining lists", path, (*total - *consumed).separated_string()));
+            let remaining_slice = &crate::io_helpers::load_lists_from_file(path)?; // reload to avoid moved ownership
+            let remaining: Vec<NoSetListSerialized> = remaining_slice[*consumed..].to_vec();
+            if !crate::io_helpers::save_to_file_serialized(&remaining, path) {
+                return Err(std::io::Error::new(std::io::ErrorKind::Other, "Failed to rewrite origin file"));
             }
         }
     }
 
-    if !current_output_buffer.is_empty() {
-        // For final partial file we pass last source batch so naming uses last contributor
-        flush_current(output_dir, target_size, current_compact_batch, current_last_source, &mut current_output_buffer, &current_output_contribs, input_dir, source_size)?;
-        files_created += 1;
-        current_output_contribs.clear();
+    // Update intermediaries for each source batch touched: remove consumed origins, add remaining entry if any
+    for (path, consumed, total, src_batch) in touched_files.iter() {
+        let origin_basename = Path::new(path).file_name().unwrap().to_string_lossy().into_owned();
+        let inter_filename = format!("{}/nsl_{:02}_intermediate_count_from_{:02}_{:06}.txt", input_dir, target_size, source_size, src_batch);
+        let mut new_lines: Vec<String> = Vec::new();
+        if Path::new(&inter_filename).exists() {
+            if let Ok(text) = std::fs::read_to_string(&inter_filename) {
+                for line in text.lines() {
+                    let l = line.trim();
+                    if l.starts_with("...") {
+                        let parts: Vec<&str> = l.split_whitespace().collect();
+                        if parts.len() >= 5 {
+                            let fname = parts[4];
+                            if fname == origin_basename { continue; }
+                        }
+                        new_lines.push(line.to_string());
+                    } else {
+                        new_lines.push(line.to_string());
+                    }
+                }
+            }
+        }
+
+        let remaining = if *consumed >= *total { 0usize } else { *total - *consumed };
+        if remaining > 0 {
+            new_lines.push(format!("   ... {:>8} lists in {}", remaining, origin_basename));
+        }
+
+        if !new_lines.is_empty() {
+            let joined = new_lines.join("\n") + "\n";
+            let _ = crate::io_helpers::write_text_atomic(Path::new(&inter_filename), &joined);
+        } else {
+            let _ = std::fs::remove_file(&inter_filename);
+        }
     }
+
+    // Add the new compacted file entry to the intermediary of the last contributing source batch
+    let inter_new = format!("{}/nsl_{:02}_intermediate_count_from_{:02}_{:06}.txt", input_dir, target_size, source_size, from_src);
+    let mut lines_new: Vec<String> = Vec::new();
+    if Path::new(&inter_new).exists() {
+        if let Ok(text) = std::fs::read_to_string(&inter_new) {
+            for line in text.lines() { lines_new.push(line.to_string()); }
+        }
+    }
+    lines_new.push(format!("   ... {:>8} lists in {}", buffer.len(), Path::new(&output_filename).file_name().unwrap().to_string_lossy()));
+    let joined_new = lines_new.join("\n") + "\n";
+    let _ = crate::io_helpers::write_text_atomic(Path::new(&inter_new), &joined_new);
+    test_print("   Updated intermediary metadata files");
+
+    // Regenerate global count after this single compacted file
+    if let Err(e) = crate::list_of_nsl::count_size_files(input_dir, target_size, true, false) {
+        return Err(e);
+    }
+    test_print("   Regenerated global count file");
 
     let elapsed = start_time.elapsed().as_secs_f64();
     test_print(&format!("\nCompaction completed in {:.2} seconds", elapsed));
-    test_print(&format!("   Input files: {}", file_counts.len()));
-    test_print(&format!("   Compacted files: {}", files_created));
-    test_print(&format!("   Total lists: {}", total_lists.separated_string()));
+    test_print(&format!("   Compacted file: {}", output_filename));
+    test_print(&format!("   Lists in compacted file: {}", buffer.len().separated_string()));
 
     Ok(())
 }
@@ -416,6 +382,10 @@ pub fn compact_one_file_inplace(dir: &str, target_size: u8, batch_size: u64) -> 
     let compact_chunk: Vec<NoSetListSerialized> = all_lists.drain(0..take).collect();
     let remaining: Vec<NoSetListSerialized> = all_lists; // moved remaining
 
+    // Ensure mmap and file are dropped so Windows allows rewrite/rename of the origin file
+    drop(mmap);
+    drop(file);
+
     let source_size = target_size - 1;
     // Determine compacted filename: use last source batch = first_src here
     let is_full = (compact_chunk.len() as u64) >= batch_size;
@@ -426,7 +396,10 @@ pub fn compact_one_file_inplace(dir: &str, target_size: u8, batch_size: u64) -> 
     };
 
     test_print(&format!("   Writing compacted file {} ({} lists)", compact_name, compact_chunk.len().separated_string()));
-    save_compacted_batch_atomic(&compact_name, &compact_chunk)?;
+    // Use the simpler save helper here to avoid platform rename permission issues during tests.
+    if !crate::io_helpers::save_to_file_serialized(&compact_chunk, &compact_name) {
+        return Err(std::io::Error::new(std::io::ErrorKind::Other, "Failed to save compacted file"));
+    }
 
     // Now rewrite or delete the origin file with remaining lists
     if remaining.is_empty() {
@@ -434,22 +407,78 @@ pub fn compact_one_file_inplace(dir: &str, target_size: u8, batch_size: u64) -> 
         let _ = std::fs::remove_file(&filepath);
     } else {
         test_print(&format!("   Origin file {} shrunk to {} lists; rewriting", filepath, remaining.len().separated_string()));
-        // Serialize remaining and atomically replace original
-        let mut serializer = AllocSerializer::<4096>::default();
-        serializer.serialize_value(&remaining)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Serialization error: {:?}", e)))?;
-        let bytes = serializer.into_serializer().into_inner();
-        let path = Path::new(&filepath);
-        let pid = std::process::id();
-        let tmp = path.with_extension(format!("tmp.{}", pid));
-        std::fs::write(&tmp, &bytes)?;
-        let f = std::fs::File::open(&tmp)?;
-        f.sync_all()?;
-        // Replace
-        if path.exists() { let _ = std::fs::remove_file(path); }
-        std::fs::rename(&tmp, path)?;
+        // Use simpler save helper to rewrite origin (avoid Windows locking/permission race in tests)
+        if !crate::io_helpers::save_to_file_serialized(&remaining, &filepath) {
+            return Err(std::io::Error::new(std::io::ErrorKind::Other, "Failed to save rewritten origin file"));
+        }
     }
 
     test_print(&format!("   Single-file compaction finished: created {} (full={})", compact_name, is_full));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::io_helpers;
+    use std::fs;
+    use std::path::Path;
+
+    fn make_test_dir(name: &str) -> String {
+        let mut p = std::env::temp_dir();
+        p.push(format!("funny_test_{}_{}", name, std::process::id()));
+        let _ = fs::remove_dir_all(&p);
+        fs::create_dir_all(&p).expect("create temp dir");
+        p.to_string_lossy().into_owned()
+    }
+
+    fn eq_nsl(a: &NoSetListSerialized, b: &NoSetListSerialized) -> bool {
+        a.n == b.n && a.max_card == b.max_card && a.no_set_list == b.no_set_list && a.remaining_cards_list == b.remaining_cards_list
+    }
+
+    #[test]
+    fn compact_one_file_preserves_lists_no_loss_no_dup() {
+        let dir = make_test_dir("onefile");
+        // Create 5 distinct NoSetListSerialized entries
+        let lists: Vec<NoSetListSerialized> = (0..5).map(|i| NoSetListSerialized {
+            n: 3,
+            max_card: i as usize,
+            no_set_list: vec![i as usize, i as usize + 1, i as usize + 2],
+            remaining_cards_list: vec![i as usize + 3, i as usize + 4],
+        }).collect();
+
+        let filename = format!("{}/nsl_{:02}_batch_{:06}_to_{:02}_batch_{:06}.rkyv", dir, 14u8, 0u32, 15u8, 0u32);
+        assert!(io_helpers::save_to_file_serialized(&lists, &filename));
+
+        // Run single-file compaction with batch_size = 3 (will take first 3 -> compacted)
+        compact_one_file_inplace(&dir, 15u8, 3).expect("compaction failed");
+
+        // Expect compacted file (index 000000) exists
+        let compacted_path = format!("{}/nsl_{:02}_batch_{:06}_to_{:02}_batch_{:06}_compacted.rkyv", dir, 14u8, 0u32, 15u8, 0u32);
+        assert!(Path::new(&compacted_path).exists(), "compacted file missing");
+
+        let compacted = io_helpers::read_from_file_serialized(&compacted_path).expect("read compacted");
+        assert_eq!(compacted.len(), 3);
+
+        // Origin should have remaining 2 lists
+        let origin = io_helpers::read_from_file_serialized(&filename).expect("read origin");
+        assert_eq!(origin.len(), 2);
+
+        // Combine and verify all original lists are present exactly once
+        let mut combined: Vec<NoSetListSerialized> = Vec::new();
+        combined.extend(compacted.iter().cloned());
+        combined.extend(origin.iter().cloned());
+        assert_eq!(combined.len(), lists.len());
+
+        for orig in lists {
+            let mut found = 0usize;
+            for c in &combined {
+                if eq_nsl(&orig, c) { found += 1; }
+            }
+            assert_eq!(found, 1, "Original list not found exactly once");
+        }
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
