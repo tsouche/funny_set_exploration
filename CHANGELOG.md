@@ -5,6 +5,16 @@ All notable changes to the funny_set_exploration project are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.10] - 2025-12-17
+
+### Fixed
+
+- **Compaction infinite loop**: Fixed bug where non-full compacted files were marked as non-compacted
+  - Changed register_file() call to always pass `compacted: true` for all compacted files
+  - Previously, only full files (10M lists) were marked as compacted
+  - Partial files (< 10M) were incorrectly marked as non-compacted, causing infinite re-compaction
+- Unlimited compaction: Removed 2-file limit, now processes all files until completion
+
 ## [0.4.9] - 2025-12-17
 
 ### Changed

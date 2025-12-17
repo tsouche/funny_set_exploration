@@ -83,11 +83,12 @@ pub fn compact_size_files(input_dir: &str, output_dir: &str, target_size: u8, ba
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to load state: {}", e)))?;
 
     let mut total_compacted_files = 0;
-    const MAX_COMPACTED_FILES: usize = 2; // Create up to 2 compacted files per invocation
+    let mut iteration = 0;
 
-    // Loop to create multiple compacted files
-    for iteration in 0..MAX_COMPACTED_FILES {
-        test_print(&format!("\n--- Compaction iteration {} ---", iteration + 1));
+    // Loop to create multiple compacted files until nothing left to compact
+    loop {
+        iteration += 1;
+        test_print(&format!("\n--- Compaction iteration {} ---", iteration));
 
         // Rebuild plan from current state (may have changed after previous iteration)
         let mut plan: Vec<(String, u64, u32, u32)> = Vec::new(); // (filename, count, src_batch, tgt_batch)
@@ -106,30 +107,14 @@ pub fn compact_size_files(input_dir: &str, output_dir: &str, target_size: u8, ba
         // Order by target_batch then source_batch (ascending)
         plan.sort_by(|a, b| match a.3.cmp(&b.3) { std::cmp::Ordering::Equal => a.2.cmp(&b.2), other => other });
 
-        // Determine next compacted batch index by scanning existing compacted files
+        // Determine next compacted batch index from state (more reliable than disk scan)
         let mut next_compact_idx: u32 = 0;
-        if let Ok(entries) = std::fs::read_dir(output_dir) {
-            let mut max_idx: Option<u32> = None;
-            for entry in entries.flatten() {
-                if let Some(name) = entry.file_name().to_str() {
-                    if name.ends_with("_compacted.rkyv") && name.contains(&format!("_to_{:02}_batch_", target_size)) {
-                        if let Some(to_pos) = name.find("_to_") {
-                            let after_to = &name[to_pos + 4..];
-                            if let Some(batch_pos) = after_to.rfind("_batch_") {
-                                let start = batch_pos + 7;
-                                let end = after_to.len() - "_compacted.rkyv".len();
-                                if end > start && end <= after_to.len() {
-                                    if let Ok(num) = after_to[start..end].parse::<u32>() {
-                                        max_idx = Some(max_idx.map_or(num, |m| m.max(num)));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+        for ((_, tgt, _), info) in state.entries().iter() {
+            if info.compacted {
+                next_compact_idx = next_compact_idx.max(tgt + 1);
             }
-            if let Some(m) = max_idx { next_compact_idx = m + 1; }
         }
+        test_print(&format!("   Next compacted index (from state): {:06}", next_compact_idx));
 
         // Accumulate lists up to batch_size
         let mut buffer: Vec<NoSetListSerialized> = Vec::new();
@@ -175,16 +160,30 @@ pub fn compact_size_files(input_dir: &str, output_dir: &str, target_size: u8, ba
         // Determine output filename using the last contributor src batch
         let from_src = contribs.last().map(|c| c.0).unwrap_or(0);
         let is_full = (buffer.len() as u64) >= batch_size;
-        let output_filename = if is_full {
-            format!("{}/nsl_{:02}_batch_{:06}_to_{:02}_batch_{:06}_compacted.rkyv", output_dir, source_size, from_src, target_size, next_compact_idx)
-        } else {
-            format!("{}/nsl_{:02}_batch_{:06}_to_{:02}_batch_{:06}.rkyv", output_dir, source_size, from_src, target_size, next_compact_idx)
-        };
 
-        // Idempotent skip if already exists
+        // Find first available index if calculated one already exists
+        let mut final_compact_idx = next_compact_idx;
+        let mut output_filename = if is_full {
+            format!("{}/nsl_{:02}_batch_{:06}_to_{:02}_batch_{:06}_compacted.rkyv", output_dir, source_size, from_src, target_size, final_compact_idx)
+        } else {
+            format!("{}/nsl_{:02}_batch_{:06}_to_{:02}_batch_{:06}.rkyv", output_dir, source_size, from_src, target_size, final_compact_idx)
+        };
+        
+        // Find first available index (idempotent: skip existing files)
+        const MAX_INDEX_SEARCH: u32 = 1000;
+        while Path::new(&output_filename).exists() && final_compact_idx < next_compact_idx + MAX_INDEX_SEARCH {
+            test_print(&format!("   Compacted file {} already exists, trying next index", output_filename));
+            final_compact_idx += 1;
+            output_filename = if is_full {
+                format!("{}/nsl_{:02}_batch_{:06}_to_{:02}_batch_{:06}_compacted.rkyv", output_dir, source_size, from_src, target_size, final_compact_idx)
+            } else {
+                format!("{}/nsl_{:02}_batch_{:06}_to_{:02}_batch_{:06}.rkyv", output_dir, source_size, from_src, target_size, final_compact_idx)
+            };
+        }
+        
         if Path::new(&output_filename).exists() {
-            test_print(&format!("   Skipping existing compacted file {}", output_filename));
-            break; // Skip this iteration if file already exists
+            test_print(&format!("   Could not find available index after {} tries, stopping", MAX_INDEX_SEARCH));
+            break;
         }
 
         test_print(&format!("   Writing compacted file {} ({} lists)", output_filename, buffer.len().separated_string()));
@@ -199,9 +198,9 @@ pub fn compact_size_files(input_dir: &str, output_dir: &str, target_size: u8, ba
         state.register_file(
             &compact_basename,
             from_src,
-            next_compact_idx,
+            final_compact_idx,
             buffer.len() as u64,
-            is_full,
+            true,  // Always mark as compacted, regardless of size
             file_size,
             mtime,
         );

@@ -1,8 +1,8 @@
 /// Manage the search for the grail of Set: combinations of 12 / 15 / 18 cards 
 /// with no sets
 ///
-/// Version 0.4.9 - Compaction refactored to GlobalFileState with crash-safe multi-file support
-/// Added: In-memory state with atomic JSON/TXT saves after each output file
+/// Version 0.4.10 - Fixed infinite compaction loop for non-full final files
+/// Fixed: Compacted files now always marked as compacted regardless of size
 /// 
 /// CLI Usage:
 ///   funny.exe --size 3 -o .\output                          # Create seed lists (size 3)
