@@ -24,11 +24,13 @@ pub fn output_filename(
 }
 
 /// Find input filename for reading by matching the pattern
-/// *_to_{target_size}_batch_{target_batch}.rkyv and return the full path
-pub fn find_input_filename(base_path: &str, target_size: u8, target_batch: u32) -> Option<String> {
+/// *_to_{input_size}_batch_{target_batch}.rkyv and return the full path
+/// input_size is the size of lists IN the file being read (not the size being created)
+pub fn find_input_filename(base_path: &str, input_size: u8, target_batch: u32) -> Option<String> {
     let batch_width = 6;
-    let pattern = format!("_to_{:02}_batch_{:0width$}.rkyv", target_size, target_batch, width = batch_width);
-    crate::utils::debug_print(&format!("   ... looking for input file matching: *{} in {}", pattern, base_path));
+    // input_size is already the size of lists in the file we're reading
+    let pattern = format!("_to_{:02}_batch_{:0width$}.rkyv", input_size, target_batch, width = batch_width);
+    crate::utils::test_print(&format!("   ... looking for input file matching: *{} in {}", pattern, base_path));
 
     let entries = match fs::read_dir(base_path) {
         Ok(e) => e,
