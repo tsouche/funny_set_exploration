@@ -49,26 +49,20 @@ use crate::utils::*;
     long_about = concat!(
         "Generate no-set lists for the Set card game\n\n",
         "MODES (examples and how common args affect each mode):\n\n",
-        "1) Size mode (`--size`, `-s <SIZE|RANGE`)\n",
-        "   - Purpose: Build one target size or a range (e.g. 5-7).\n",
-        "   - Input path (-i): dir to read input files (required when\n",
-        "     not using defaults).\n",
-        "   - Output path (-o): dir to write outputs; if omitted,\n",
-        "     defaults to input or current dir.\n",
-        "   - --force: has no effect for `--size`.\n",
+        "1) Size mode (`--size`, `-s <SIZE> [BATCH]`)\n",
+        "   - Purpose: Build a specific output size.\n",
+        "   - Single arg (--size 5): Process size 5 from input batch 0.\n",
+        "   - Two args (--size 5 2): Resume size 5 from input batch 2.\n",
+        "   - Input path (-i): dir to read input files (defaults to\n",
+        "     current dir).\n",
+        "   - Output path (-o): dir to write outputs (defaults to\n",
+        "     input dir).\n",
+        "   - --force: regenerates count file when restarting from\n",
+        "     a batch.\n",
         "   - --keep_state: preserves partial/processed state files.\n",
-        "   - Example: --size 5 -i ./in -o ./out\n\n",
-        "2) Restart mode (`--restart <SIZE> <BATCH>`)\n",
-        "   - Purpose: Resume from a specific input batch through\n",
-        "     size 18.\n",
-        "   - Input path (-i): source input directory for batches.\n",
-        "   - Output path (-o): target output directory (defaults\n",
-        "     to input if omitted).\n",
-        "   - --force: regenerates the baseline count file by\n",
-        "     scanning files before resuming.\n",
-        "   - --keep_state: preserved if provided.\n",
-        "   - Example: --restart 5 2 -i ./in -o ./out --force\n\n",
-        "3) Unitary mode (`--unitary <SIZE> <BATCH>`)\n",
+        "   - Example: --size 5 -i ./in -o ./out\n",
+        "   - Example: --size 5 2 -i ./in -o ./out --force\n\n",
+        "2) Unitary mode (`--unitary <SIZE> <BATCH>`)\n",
         "   - Purpose: Reprocess a single input batch to overwrite\n",
         "     or fix outputs.\n",
         "   - Input path (-i): dir containing the input batch.\n",
@@ -77,7 +71,7 @@ use crate::utils::*;
         "   - --force: regenerates count baseline first.\n",
         "   - --keep_state: preserves state files for debugging.\n",
         "   - Example: --unitary 7 0 -i ./in --force\n\n",
-        "4) Count mode (`--count <SIZE>`)\n",
+        "3) Count mode (`--count <SIZE>`)\n",
         "   - Purpose: Count existing files for a size and create a\n",
         "     summary report.\n",
         "   - Input path (-i): dir to read files to count (required).\n",
@@ -87,7 +81,7 @@ use crate::utils::*;
         "   - --keep_state: affects whether intermediary files are\n",
         "     preserved.\n",
         "   - Example: --count 6 -i ./out --force\n\n",
-        "5) Check mode (`--check <SIZE>`)\n",
+        "4) Check mode (`--check <SIZE>`)\n",
         "   - Purpose: Verify repository integrity for an output\n",
         "     size.\n",
         "   - Input path (-i): not used.\n",
@@ -95,14 +89,14 @@ use crate::utils::*;
         "     (defaults to current dir).\n",
         "   - --force/--keep_state: not applicable.\n",
         "   - Example: --check 8 -o ./out\n\n",
-        "6) Compact mode (`--compact <SIZE>`)",
+        "5) Compact mode (`--compact <SIZE>`)\n",
         "   - Purpose: Consolidate many small output files into\n",
         "     larger batches.\n",
         "   - Input path (-i): dir containing files to compact.\n",
         "   - Output path (-o): dir to write compacted files\n",
         "     (defaults to input).\n",
         "   - Example: --compact 12 -i ./out -o ./compacted\n\n",
-        "7) Legacy-count mode (`--legacy-count <SIZE>` )\n",
+        "6) Legacy-count mode (`--legacy-count <SIZE>` )\n",
         "   - Purpose: Read existing global/intermediary counts and\n",
         "     emit nsl_{size}_global_info.json/.txt without\n",
         "     recomputing intermediaries.\n",
@@ -112,7 +106,7 @@ use crate::utils::*;
         "  --keep_state\n",
         "  The sections above show how each flag affects specific\n",
         "  modes (e.g. --force regenerates counts for --count,\n",
-        "  --restart and --unitary).\n"
+        "  --size with batch, and --unitary).\n"
     )
 )]
 struct Args {
@@ -145,12 +139,12 @@ struct Args {
 
     /// Compact small output files into larger batches: <SIZE>
     /// Consolidates multiple small output files into larger batches.
-    #[arg(long, conflicts_with_all = ["size", "restart", "unitary", "count", "check"], help = "Compact small files into larger batches for a target size")]
+    #[arg(long, conflicts_with_all = ["size", "unitary", "count", "check"], help = "Compact small files into larger batches for a target size")]
     compact: Option<u8>,
 
     /// Check repository integrity for a specific size
     /// Analyze files and count data for missing batches or files.
-    #[arg(long, conflicts_with_all = ["size", "restart", "unitary", "count", "compact"], help = "Check repository integrity for a specific size")]
+    #[arg(long, conflicts_with_all = ["size", "unitary", "count", "compact"], help = "Check repository integrity for a specific size")]
     check: Option<u8>,
 
     /// Input directory path (optional)
@@ -212,15 +206,6 @@ fn validate_size(size: u8, mode_name: &str, min: u8, max: u8) -> Result<(), Stri
 }
 
 /// Resolve paths for modes that use both input and output with fallback logic
-fn resolve_dual_path(input_arg: Option<&str>, output_arg: Option<&str>) -> (String, String) {
-    match (input_arg, output_arg) {
-        (Some(i), Some(o)) => (i.to_string(), o.to_string()),
-        (Some(i), None) => (i.to_string(), i.to_string()),
-        (None, Some(o)) => (o.to_string(), o.to_string()),
-        (None, None) => (".".to_string(), ".".to_string()),
-    }
-}
-
 /// Resolve input/output paths based on mode requirements
 fn resolve_paths(
     mode: &ProcessingMode,
@@ -239,11 +224,7 @@ fn resolve_paths(
             // Check only uses output
             (String::new(), output_arg.unwrap_or(".").to_string())
         },
-        ProcessingMode::Restart { .. } => {
-            // Restart uses both, with fallback logic
-            resolve_dual_path(input_arg, output_arg)
-        },
-        ProcessingMode::Unitary { .. } | ProcessingMode::SizeRange { .. } | ProcessingMode::Compact { .. } => {
+        ProcessingMode::Size { .. } | ProcessingMode::Unitary { .. } | ProcessingMode::Compact { .. } => {
             // These modes default output to input if not specified
             let input = input_arg.unwrap_or(".").to_string();
             let output = output_arg.unwrap_or(&input).to_string();
@@ -414,16 +395,12 @@ fn execute_mode(config: &ProcessingConfig) -> Result<String, String> {
             Ok("Compaction completed successfully".to_string())
         },
         
-        ProcessingMode::Restart { size, batch } => {
-            execute_restart_mode(config, *size, *batch)
+        ProcessingMode::Size { size, start_batch } => {
+            execute_size_mode(config, *size, *start_batch)
         },
         
         ProcessingMode::Unitary { size, batch } => {
             execute_unitary_mode(config, *size, *batch)
-        },
-        
-        ProcessingMode::SizeRange { start, end } => {
-            execute_size_range_mode(config, *start, *end)
         },
         
         ProcessingMode::Default => {
@@ -432,39 +409,60 @@ fn execute_mode(config: &ProcessingConfig) -> Result<String, String> {
     }
 }
 
-/// Execute restart mode: resume from specific batch through size 18
-fn execute_restart_mode(config: &ProcessingConfig, restart_size: u8, restart_batch: u32) -> Result<String, String> {
+/// Execute size mode: process specific size, optionally restarting from a batch
+fn execute_size_mode(config: &ProcessingConfig, output_size: u8, start_batch: Option<u32>) -> Result<String, String> {
     use crate::list_of_nsl::ListOfNSL;
     use crate::file_info::GlobalFileState;
     
-    test_print(&format!("RESTART MODE: Resuming from size {} batch {}", restart_size, restart_batch));
-    test_print("Will process through size 18");
+    if let Some(batch) = start_batch {
+        test_print(&format!("RESTART MODE: Resuming output size {} from input batch {}", output_size, batch));
+        handle_force_recount(config.force_recount, &config.output_dir, output_size, config.keep_state)?;
+    } else {
+        test_print(&format!("Target output size = {} cards", output_size));
+    }
     test_print(&format!("Batch size: {} entries/file (~1GB, compact)", config.max_lists_per_file.separated_string()));
     print_directories(&config.input_dir, &config.output_dir);
-    
-    handle_force_recount(config.force_recount, &config.output_dir, restart_size + 1, config.keep_state)?;
     test_print("\n======================\n");
 
     let mut no_set_lists = ListOfNSL::with_paths(&config.input_dir, &config.output_dir);
 
-    for target_size in (restart_size + 1)..=18 {
-        let source_size = target_size - 1;
-        let mut global_state = GlobalFileState::from_sources(&config.output_dir, target_size)
-            .map_err(|e| format!("Failed to load global state: {}", e))?;
-        
-        if source_size == restart_size {
-            test_print(&format!("Start processing files to create no-set-lists of size {} (from input batch {}):\n", 
-                target_size, restart_batch));
-            no_set_lists.process_from_batch(source_size, restart_batch, &config.max_lists_per_file, Some(&mut global_state));
-        } else {
-            test_print(&format!("Start processing files to create no-set-lists of size {}:\n", target_size));
-            no_set_lists.process_all_files_of_current_size_n(source_size, &config.max_lists_per_file, Some(&mut global_state));
-        }
-        
-        test_print(&format!("\nCompleted size {}!\n", target_size));
+    // Handle size 3: create seed lists directly
+    if output_size == 3 {
+        test_print("Creating seed lists (size 3)...");
+        no_set_lists.create_seed_lists();
+        test_print("Seed lists created successfully.\n");
+        return Ok("Seed lists (size 3) created successfully".to_string());
+    }
+
+    // For size 4+, need to create seed lists first if starting from batch 0
+    if output_size == 4 && start_batch.is_none() {
+        test_print("Creating seed lists (size 3)...");
+        // Create seed lists with output to input directory (so they don't pollute output dir)
+        let mut seed_generator = ListOfNSL::with_paths(&config.input_dir, &config.input_dir);
+        seed_generator.create_seed_lists();
+        test_print("Seed lists created successfully.\n");
+    }
+
+    // Process the requested size
+    let source_size = output_size - 1;
+    let mut global_state = GlobalFileState::from_sources(&config.output_dir, output_size)
+        .map_err(|e| format!("Failed to load global state: {}", e))?;
+    
+    if let Some(batch) = start_batch {
+        test_print(&format!("Start processing from input batch {} to create no-set-lists of size {}:", batch, output_size));
+        no_set_lists.process_from_batch(source_size, batch, &config.max_lists_per_file, Some(&mut global_state));
+    } else {
+        test_print(&format!("Start processing files to create no-set-lists of size {}:", output_size));
+        no_set_lists.process_all_files_of_current_size_n(source_size, &config.max_lists_per_file, Some(&mut global_state));
     }
     
-    Ok(format!("Restart processing completed through size 18"))
+    test_print(&format!("\nCompleted size {}! Generated files: no-set-list_{:02}_batch_*.rkyv\n", output_size, output_size));
+    
+    if start_batch.is_some() {
+        Ok(format!("Size {} processing completed (restarted from batch {})", output_size, start_batch.unwrap()))
+    } else {
+        Ok(format!("Size {} processing completed", output_size))
+    }
 }
 
 /// Execute unitary mode: process a single input batch
@@ -490,59 +488,6 @@ fn execute_unitary_mode(config: &ProcessingConfig, unitary_size: u8, unitary_bat
     
     Ok(format!("Unitary processing completed for size {} batch {}", unitary_size, unitary_batch))
 }
-
-/// Execute size range mode: process one or more consecutive sizes
-fn execute_size_range_mode(config: &ProcessingConfig, start_size: u8, end_size: u8) -> Result<String, String> {
-    use crate::list_of_nsl::ListOfNSL;
-    use crate::file_info::GlobalFileState;
-    
-    if start_size == end_size {
-        test_print(&format!("Target size = {} cards", start_size));
-    } else {
-        test_print(&format!("Size range = {} to {} cards", start_size, end_size));
-    }
-    test_print(&format!("Batch size: {} entries/file (~1GB, compact)", config.max_lists_per_file.separated_string()));
-    print_directories(&config.input_dir, &config.output_dir);
-    test_print("\n======================\n");
-
-    let mut no_set_lists = ListOfNSL::with_paths(&config.input_dir, &config.output_dir);
-
-    // Handle size 3: create seed lists directly
-    if start_size == 3 {
-        test_print("Creating seed lists (size 3)...");
-        no_set_lists.create_seed_lists();
-        test_print("Seed lists created successfully.\n");
-        
-        // If only requesting size 3, we're done
-        if end_size == 3 {
-            return Ok("Seed lists (size 3) created successfully".to_string());
-        }
-    }
-
-    // Handle size 4: need to create seed lists first if we haven't already
-    if start_size == 4 {
-        test_print("Creating seed lists (size 3)...");
-        no_set_lists.create_seed_lists();
-        test_print("Seed lists created successfully.\n");
-    }
-
-    // Process each size in the range (skip size 3 if it was the start)
-    let process_start = if start_size == 3 { 4 } else { start_size };
-    for target_size in process_start..=end_size {
-        let source_size = target_size - 1;
-        let mut global_state = GlobalFileState::from_sources(&config.output_dir, target_size)
-            .map_err(|e| format!("Failed to load global state: {}", e))?;
-        test_print(&format!("Start processing files to create no-set-lists of size {}:", target_size));
-        
-        no_set_lists.process_all_files_of_current_size_n(source_size, &config.max_lists_per_file, Some(&mut global_state));
-        
-        test_print(&format!("\nCompleted size {}! Generated files: no-set-list_{:02}_batch_*.rkyv\n", 
-            target_size, target_size));
-    }
-    
-    Ok(format!("Size range processing completed (sizes {} to {})", start_size, end_size))
-}
-
 /// Execute default mode: process the whole pipeline (seeds + sizes 4 to 18)
 fn execute_default_mode(config: &ProcessingConfig) -> Result<String, String> {
     use crate::list_of_nsl::ListOfNSL;

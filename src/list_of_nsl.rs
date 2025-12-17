@@ -554,6 +554,9 @@ impl ListOfNSL {
                 }
                 batches_processed += 1;
                 
+                // Increment batch counter to move to next input file
+                self.current_file_batch += 1;
+                
                 if stop_after_one {
                     break;
                 }
