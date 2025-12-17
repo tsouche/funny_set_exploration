@@ -1,0 +1,24 @@
+
+
+================================================================================
+                         Funny Set Exploration [0.4.7]                          
+================================================================================
+
+
+
+Compacting files for size 15...
+Target batch size: 10,000,000 lists per file
+   Found consolidated count file: X:\funny\14_to_15c/nsl_15_global_count.txt
+
+   Total lists accounted for in plan: 72,712,252
+
+   Plan: Create ~8 compacted files (batch size 10,000,000) from 23 input files
+
+   Processing input file nsl_14_batch_000022_to_15_batch_000022.rkyv
+
+   Processing input file nsl_14_batch_000021_to_15_batch_000021.rkyv
+
+   Processing input file nsl_14_batch_000020_to_15_batch_000020.rkyv
+
+   Processing input file nsl_14_batch_000019_to_15_batch_000019.rkyv
+   Writing compacted file X:\funny\14_to_15c/nsl_14_batch_000019_to_15_batch_000000_compacted.rkyv (10,000,000 lists)

@@ -33,6 +33,8 @@ mod utils;
 mod set;
 mod no_set_list;
 mod io_helpers;
+mod filenames;
+mod compaction;
 mod list_of_nsl;
 
 use clap::Parser;
@@ -338,6 +340,13 @@ fn build_config(args: &Args, max_per_file: u64) -> Result<ProcessingConfig, Stri
     };
 
     // Resolve paths based on mode
+    // Compact mode must be in-place: disallow an explicit output path
+    if let ProcessingMode::Compact { .. } = mode {
+        if args.output_path.is_some() {
+            return Err("Compact mode is in-place only; do not provide -o/--output-path".to_string());
+        }
+    }
+
     let (input_dir, output_dir) = resolve_paths(&mode, args.input_path.as_deref(), args.output_path.as_deref());
 
     Ok(ProcessingConfig {
