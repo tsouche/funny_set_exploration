@@ -275,6 +275,10 @@ impl GlobalFileState {
         }
     }
 
+    pub fn entries(&self) -> &BTreeMap<(u32, u32, String), FileInfo> {
+        &self.entries
+    }
+
     pub fn to_vec(&self) -> Vec<FileInfo> {
         let mut v: Vec<FileInfo> = self.entries.values().cloned().collect();
         v.sort_by(|a, b| match a.target_batch.cmp(&b.target_batch) {

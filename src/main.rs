@@ -349,9 +349,10 @@ fn execute_mode(config: &ProcessingConfig) -> Result<String, String> {
         },
 
         ProcessingMode::LegacyCount { size } => {
-            let base = &config.input_dir;
-            let primary = Path::new(base).join(format!("nsl_{:02}_global_count.txt", size));
-            let legacy_space = Path::new(base).join(format!("nsl_{:02}_global count.txt", size));
+            let input_base = &config.input_dir;
+            let output_base = &config.output_dir;
+            let primary = Path::new(input_base).join(format!("nsl_{:02}_global_count.txt", size));
+            let legacy_space = Path::new(input_base).join(format!("nsl_{:02}_global count.txt", size));
             let global_path = if primary.exists() {
                 Some(primary)
             } else if legacy_space.exists() {
@@ -365,15 +366,15 @@ fn execute_mode(config: &ProcessingConfig) -> Result<String, String> {
                 GlobalFileInfo::from_global_count_file(&path)
             } else {
                 test_print("Global count not found; reading intermediary files or scanning rkyv files...");
-                GlobalFileInfo::from_intermediary_files(base, *size)
+                GlobalFileInfo::from_intermediary_files(input_base, *size)
             };
 
             let mut gfi = gfi_res.map_err(|e| format!("Error loading counts: {}", e))?;
-            let json_path = Path::new(base).join(format!("nsl_{:02}_global_info.json", size));
-            let txt_path = Path::new(base).join(format!("nsl_{:02}_global_info.txt", size));
+            let json_path = Path::new(input_base).join(format!("nsl_{:02}_global_info.json", size));
+            let txt_path = Path::new(input_base).join(format!("nsl_{:02}_global_info.txt", size));
 
             gfi.save_json(&json_path).map_err(|e| format!("Error writing {}: {}", json_path.display(), e))?;
-            let txt_body = gfi.to_txt(base, *size);
+            let txt_body = gfi.to_txt(input_base, *size);
             fs::write(&txt_path, txt_body).map_err(|e| format!("Error writing {}: {}", txt_path.display(), e))?;
 
             test_print(&format!("Wrote {} and {}", json_path.display(), txt_path.display()));
