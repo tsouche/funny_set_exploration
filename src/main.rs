@@ -1,7 +1,7 @@
 /// Manage the search for the grail of Set: combinations of 12 / 15 / 18 cards 
 /// with no sets
 ///
-/// Version 0.4.8 - GlobalFileState with incremental JSON/TXT persistence
+/// Version 0.4.9 - Compaction refactored to GlobalFileState with crash-safe multi-file support
 /// Added: In-memory state with atomic JSON/TXT saves after each output file
 /// 
 /// CLI Usage:

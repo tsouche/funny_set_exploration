@@ -1,4 +1,4 @@
-/// Version 0.4.8: Hybrid stack-optimized computation with GlobalFileState persistence
+/// Version 0.4.9: Hybrid stack-optimized computation with GlobalFileState persistence
 /// 
 /// This implementation combines the best of both worlds:
 /// - Uses NoSetList (stack arrays) for computation → 4-5× faster

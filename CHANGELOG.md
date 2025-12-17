@@ -5,6 +5,23 @@ All notable changes to the funny_set_exploration project are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.9] - 2025-12-17
+
+### Changed
+
+- **Compaction module**: Refactored to use GlobalFileState instead of legacy TXT parsing
+  - Loads state from JSON → TXT → intermediary → rkyv scan
+  - Uses state.remove_file(), update_count(), register_file() APIs
+  - Multi-file support: creates up to 2 compacted files per invocation
+  - Crash-safe: flushes state after each compacted file creation
+  - Flushes state again after file modifications (delete/shrink)
+
+### Fixed
+
+- Legacy count now writes JSON/TXT to input directory (same as rkyv files)
+- State persistence now happens immediately after each compacted file creation
+- Consumed files deleted/shrunk immediately after each compacted file
+
 ## [0.4.8] - 2025-01-10
 
 ### Added

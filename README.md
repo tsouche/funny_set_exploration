@@ -148,7 +148,8 @@ Examples:
 
 ### Version History
 
-- **v0.4.8** (Current): GlobalFileState with incremental JSON/TXT persistence, unified --size mode
+- **v0.4.9** (Current): Refactored compaction to use GlobalFileState, multi-file crash-safe compaction
+- **v0.4.8**: GlobalFileState with incremental JSON/TXT persistence, unified --size mode
 - **v0.4.7**: 6-digit batch formatting, input-intermediary tracking
 - **v0.4.6**: Added input-intermediary file generation and atomic writes
 - **v0.4.1**: Renamed modes for clarity, improved count file format
