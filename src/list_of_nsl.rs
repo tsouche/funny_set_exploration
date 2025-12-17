@@ -26,6 +26,7 @@ use crate::set::*;
 use crate::no_set_list::*;
 use crate::io_helpers::*;
 use crate::filenames::*;
+use crate::file_info::GlobalFileState;
 
 /// Batch processor: NoSetList for compute, NoSetListSerialized for I/O
 pub struct ListOfNSL {
@@ -271,7 +272,7 @@ impl ListOfNSL {
     }
     
     /// Save current batch (converts NoSetList to NoSetListSerialized for compact storage)
-    fn save_new_to_file(&mut self) -> bool {
+    fn save_new_to_file(&mut self, state: Option<&mut GlobalFileState>) -> bool {
         let file = output_filename(
             &self.output_path, 
             self.current_size, 
@@ -300,10 +301,38 @@ impl ListOfNSL {
         match save_to_file_serialized(&compacted, &file) {
             true => {
                 self.file_io_time += io_start.elapsed().as_secs_f64();
-                
-                // Buffer this output batch info for the input-intermediary file
-                self.buffer_input_intermediary_line(self.new_output_batch, additional_new);
-                
+
+                // Register in state or buffer for legacy intermediary file
+                if let Some(state) = state {
+                    let file_path = std::path::Path::new(&file);
+                    let (file_size, mtime) = file_path.metadata()
+                        .ok()
+                        .map(|m| (
+                            Some(m.len()),
+                            m.modified().ok()
+                                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                                .map(|d| d.as_secs() as i64)
+                        ))
+                        .unwrap_or((None, None));
+                    
+                    let filename = file_path.file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(&file)
+                        .to_string();
+                    
+                    state.register_file(
+                        &filename,
+                        self.current_file_batch,
+                        self.new_output_batch,
+                        additional_new,
+                        false,
+                        file_size,
+                        mtime,
+                    );
+                } else {
+                    // Fallback to legacy buffer system
+                    self.buffer_input_intermediary_line(self.new_output_batch, additional_new);
+                }
                 self.new_total_list_count += additional_new;
                 self.new_output_batch += 1;
                 self.new.clear();
@@ -376,7 +405,7 @@ impl ListOfNSL {
 
     /// Process one input file using stack-optimized computation
     /// Creates output files with modular naming and closes output when input exhausted
-    fn process_one_file_of_current_size_n(&mut self, max: &u64) -> u64 {
+    fn process_one_file_of_current_size_n(&mut self, max: &u64, mut state: Option<&mut GlobalFileState>) -> u64 {
         debug_print(&format!("   ... processing batch {} of size {:02} ({} input lists)", 
             self.current_file_batch, self.current_size, self.current.len()));
         debug_print(&format!("process_one_file_of_current_size_n: Processing batch {} \
@@ -413,22 +442,22 @@ impl ListOfNSL {
             if self.new.len() as u64 >= *max {
                 test_print(&format!("   ... saving batch ({:>10} lists), output batch {}", 
                     self.new.len().separated_string(), self.new_output_batch));
-                if !self.save_new_to_file() {
+                if !self.save_new_to_file(state.as_deref_mut()) {
                     test_print("   ... ERROR: Failed to save batch");
                     debug_print("process_one_file_of_current_size_n: Error saving batch");
                 }
             }
-            
+
             i += 1;
         }
         
         // Save any remaining lists from this input file (even if < max)
         if !self.new.is_empty() {
-            test_print(&format!("   ... saving final batch ({} lists), output batch {}", 
+            test_print(&format!("   ... saving final batch ({} lists), output batch {}",
                 self.new.len().separated_string(), self.new_output_batch));
-            debug_print(&format!("process_one_file_of_current_size_n: saving final batch of {}", 
+            debug_print(&format!("process_one_file_of_current_size_n: saving final batch of {}",
                 self.new.len()));
-            if !self.save_new_to_file() {
+            if !self.save_new_to_file(state.as_deref_mut()) {
                 test_print("   ... ERROR: Failed to save final batch");
                 debug_print("process_one_file_of_current_size_n: Error saving final batch");
             }
@@ -490,7 +519,7 @@ impl ListOfNSL {
     
     /// Process batches in a loop with consistent logging
     /// Returns number of batches processed
-    fn process_batch_loop(&mut self, max: &u64, stop_after_one: bool) -> u32 {
+    fn process_batch_loop(&mut self, max: &u64, stop_after_one: bool, mut state: Option<&mut GlobalFileState>) -> u32 {
         let mut batches_processed = 0;
         
         loop {
@@ -500,24 +529,29 @@ impl ListOfNSL {
             }
             test_print(&format!("   ... loading batch {}", self.current_file_batch));
             let loaded = self.refill_current_from_file();
-            
+
             if loaded {
                 test_print(&format!("   ... loaded {:>10} lists from batch {}", 
                     self.current.len().separated_string(), self.current_file_batch));
-                
-                self.process_one_file_of_current_size_n(max);
-                
-                // Write buffered input-intermediary file in one operation
-                let batch_width = 6;
-                let intermediary_filename = format!(
-                    "no_set_list_input_intermediate_count_{:02}_{:0width$}.txt",
-                    self.current_size, self.current_file_batch,
-                    width = batch_width
-                );
-                self.write_input_intermediary_file();
-                test_print(&format!("   ... saving input intermediary file {}", intermediary_filename));
-                
-                self.current_file_batch += 1;
+
+                self.process_one_file_of_current_size_n(max, state.as_deref_mut());
+
+                // Flush state or write legacy intermediary file
+                if let Some(ref mut s) = state {
+                    if let Err(e) = s.flush() {
+                        debug_print(&format!("Error flushing global state: {}", e));
+                    }
+                    test_print(&format!("   ... flushed global state (JSON/TXT)"));
+                } else {
+                    let batch_width = 6;
+                    let intermediary_filename = format!(
+                        "no_set_list_input_intermediate_count_{:02}_{:0width$}.txt",
+                        self.current_size, self.current_file_batch,
+                        width = batch_width
+                    );
+                    self.write_input_intermediary_file();
+                    test_print(&format!("   ... saving input intermediary file {}", intermediary_filename));
+                }
                 batches_processed += 1;
                 
                 if stop_after_one {
@@ -538,7 +572,7 @@ impl ListOfNSL {
     // ========================================================================
     
     /// Process all files for a given size
-    pub fn process_all_files_of_current_size_n(&mut self, current_size: u8, max: &u64) -> u64 {
+    pub fn process_all_files_of_current_size_n(&mut self, current_size: u8, max: &u64, state: Option<&mut GlobalFileState>) -> u64 {
         if current_size < 3 {
             debug_print("process_all_files_of_current_size_n: size must be >= 3");
             return 0;
@@ -555,7 +589,7 @@ impl ListOfNSL {
         self.new_total_list_count = 0;
         
         // Process all batches
-        self.process_batch_loop(max, false);
+        self.process_batch_loop(max, false, state);
         
         debug_print(&format!("process_all_files_of_current_size_n: Finished \
             processing size {:02}", self.current_size));
@@ -570,7 +604,7 @@ impl ListOfNSL {
     
     /// Process files starting from a specific batch number (for restart capability)
     /// Used to resume processing after interruption
-    pub fn process_from_batch(&mut self, current_size: u8, start_batch: u32, max: &u64) -> u64 {
+    pub fn process_from_batch(&mut self, current_size: u8, start_batch: u32, max: &u64, state: Option<&mut GlobalFileState>) -> u64 {
         if current_size < 3 {
             debug_print("process_from_batch: size must be >= 3");
             return 0;
@@ -586,7 +620,7 @@ impl ListOfNSL {
         self.init_output_batch(start_batch);  // Scan for next available output batch
         
         // Process all batches from start_batch onwards
-        self.process_batch_loop(max, false);
+        self.process_batch_loop(max, false, state);
         
         debug_print(&format!("process_from_batch: Finished processing size {:02} from batch {}", 
             self.current_size, start_batch));
@@ -601,7 +635,7 @@ impl ListOfNSL {
     
     /// Process a single input batch (unitary processing)
     /// Processes one specific input file and generates its output files
-    pub fn process_single_batch(&mut self, input_size: u8, input_batch: u32, max: &u64) -> u64 {
+    pub fn process_single_batch(&mut self, input_size: u8, input_batch: u32, max: &u64, state: Option<&mut GlobalFileState>) -> u64 {
         if input_size < 3 {
             debug_print("process_single_batch: input size must be >= 3");
             return 0;
@@ -619,7 +653,7 @@ impl ListOfNSL {
         test_print(&format!("   ... will create output starting from batch {:06}", self.new_output_batch));
         
         // Process only this one batch
-        let batches_processed = self.process_batch_loop(max, true);
+        let batches_processed = self.process_batch_loop(max, true, state);
         
         if batches_processed == 0 {
             test_print(&format!("   ... ERROR: Could not load input file for size {:02} batch {:06}",

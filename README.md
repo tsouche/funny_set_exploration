@@ -120,7 +120,7 @@ Options:
           Validates batch sequence, consolidated count file, and intermediary files
           Reports missing batches and files with [OK]/[!!] indicators
 
-        --compact <SIZE>
+      --compact <SIZE>
           Compact small output files into larger 10M-entry batches
           SIZE refers to OUTPUT size. Consolidates files and writes new compacted files (originals preserved).
           New format: nsl_{size}c_batch_{batch}_from_{first_source}.rkyv (note the 'c' suffix after the size)

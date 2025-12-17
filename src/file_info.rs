@@ -192,6 +192,140 @@ impl GlobalFileInfo {
     }
 }
 
+
+
+
+/// Mutable, incremental state for file info with atomic flush helpers.
+#[derive(Debug, Clone)]
+pub struct GlobalFileState {
+    target_size: u8,
+    base_dir: String,
+    entries: BTreeMap<(u32, u32, String), FileInfo>,
+}
+
+impl GlobalFileState {
+    fn key(src: u32, tgt: u32, filename: &str) -> (u32, u32, String) {
+        (src, tgt, filename.to_string())
+    }
+
+    pub fn from_sources(base_dir: &str, target_size: u8) -> std::io::Result<Self> {
+        let json_path = Path::new(base_dir).join(format!("nsl_{:02}_global_info.json", target_size));
+        if json_path.exists() {
+            let gfi = GlobalFileInfo::load_json(&json_path)?;
+            return Ok(Self::from_vec(base_dir, target_size, gfi.entries));
+        }
+        let primary = Path::new(base_dir).join(format!("nsl_{:02}_global_count.txt", target_size));
+        let legacy_space = Path::new(base_dir).join(format!("nsl_{:02}_global count.txt", target_size));
+        if primary.exists() {
+            let gfi = GlobalFileInfo::from_global_count_file(&primary)?;
+            return Ok(Self::from_vec(base_dir, target_size, gfi.entries));
+        } else if legacy_space.exists() {
+            let gfi = GlobalFileInfo::from_global_count_file(&legacy_space)?;
+            return Ok(Self::from_vec(base_dir, target_size, gfi.entries));
+        }
+        let gfi = GlobalFileInfo::from_intermediary_files(base_dir, target_size)?;
+        Ok(Self::from_vec(base_dir, target_size, gfi.entries))
+    }
+
+    fn from_vec(base_dir: &str, target_size: u8, entries: Vec<FileInfo>) -> Self {
+        let mut map = BTreeMap::new();
+        for e in entries {
+            map.insert(Self::key(e.source_batch, e.target_batch, &e.filename), e);
+        }
+        let mut state = Self { target_size, base_dir: base_dir.to_string(), entries: map };
+        state.recompute_cumulative();
+        state
+    }
+
+    pub fn register_file(
+        &mut self,
+        filename: &str,
+        src_batch: u32,
+        tgt_batch: u32,
+        nb_lists_in_file: u64,
+        compacted: bool,
+        file_size_bytes: Option<u64>,
+        modified_timestamp: Option<i64>,
+    ) {
+        let fi = FileInfo {
+            source_batch: src_batch,
+            target_batch: tgt_batch,
+            cumulative_nb_lists: 0,
+            nb_lists_in_file,
+            filename: filename.to_string(),
+            compacted,
+            exists: Some(true),
+            file_size_bytes,
+            modified_timestamp,
+        };
+        self.entries.insert(Self::key(src_batch, tgt_batch, filename), fi);
+        self.recompute_cumulative();
+    }
+
+    pub fn remove_file(&mut self, filename: &str, src_batch: u32, tgt_batch: u32) {
+        self.entries.remove(&Self::key(src_batch, tgt_batch, filename));
+        self.recompute_cumulative();
+    }
+
+    pub fn update_count(&mut self, filename: &str, src_batch: u32, tgt_batch: u32, nb_lists_in_file: u64) {
+        if let Some(e) = self.entries.get_mut(&Self::key(src_batch, tgt_batch, filename)) {
+            e.nb_lists_in_file = nb_lists_in_file;
+            e.cumulative_nb_lists = 0;
+            self.recompute_cumulative();
+        }
+    }
+
+    pub fn to_vec(&self) -> Vec<FileInfo> {
+        let mut v: Vec<FileInfo> = self.entries.values().cloned().collect();
+        v.sort_by(|a, b| match a.target_batch.cmp(&b.target_batch) {
+            std::cmp::Ordering::Equal => match a.source_batch.cmp(&b.source_batch) {
+                std::cmp::Ordering::Equal => a.filename.cmp(&b.filename),
+                other => other,
+            },
+            other => other,
+        });
+        v
+    }
+
+    pub fn flush(&mut self) -> std::io::Result<()> {
+        self.recompute_cumulative();
+        let entries_vec = self.to_vec();
+
+        let json_path = Path::new(&self.base_dir).join(format!("nsl_{:02}_global_info.json", self.target_size));
+        let txt_path = Path::new(&self.base_dir).join(format!("nsl_{:02}_global_info.txt", self.target_size));
+
+        let json_tmp = json_path.with_extension("json.tmp");
+        let json_text = serde_json::to_string_pretty(&GlobalFileInfo { entries: entries_vec.clone() })
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        fs::write(&json_tmp, json_text)?;
+        if json_path.exists() { let _ = fs::remove_file(&json_path); }
+        fs::rename(json_tmp, &json_path)?;
+
+        let txt_tmp = txt_path.with_extension("txt.tmp");
+        let txt_body = render_global_count(&entries_vec, self.target_size, &self.base_dir);
+        fs::write(&txt_tmp, txt_body)?;
+        if txt_path.exists() { let _ = fs::remove_file(&txt_path); }
+        fs::rename(txt_tmp, &txt_path)?;
+
+        Ok(())
+    }
+
+    fn recompute_cumulative(&mut self) {
+        let mut entries_sorted: Vec<_> = self.entries.values_mut().collect();
+        entries_sorted.sort_by(|a, b| match a.target_batch.cmp(&b.target_batch) {
+            std::cmp::Ordering::Equal => match a.source_batch.cmp(&b.source_batch) {
+                std::cmp::Ordering::Equal => a.filename.cmp(&b.filename),
+                other => other,
+            },
+            other => other,
+        });
+        let mut cumulative = 0u64;
+        for e in entries_sorted {
+            cumulative += e.nb_lists_in_file;
+            e.cumulative_nb_lists = cumulative;
+        }
+    }
+}
 /// Result of checking one file on disk.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FileCheckResult {
