@@ -62,14 +62,14 @@ fn save_compacted_batch_atomic(filepath: &str, lists: &[NoSetListSerialized]) ->
     Err(std::io::Error::new(std::io::ErrorKind::Other, "Atomic rename and fallback write both failed"))
 }
 
-/// Compact exactly one batch in-place using GlobalFileState.
+/// Compact multiple batches in-place using GlobalFileState.
 /// - In-place only (input_dir == output_dir).
 /// - Uses GlobalFileState for tracking instead of parsing TXT files.
-/// - Idempotent: if the chosen compacted output already exists, the function exits without
-///   modifying origins. After successfully creating the compacted file, GlobalFileState is
-///   updated and flushed to JSON/TXT atomically.
+/// - Creates multiple compacted files in a row (up to 2 by default).
+/// - After EACH compacted file: deletes/shrinks consumed files and flushes state.
+/// - Crash-safe: state persisted after each compacted file creation.
 pub fn compact_size_files(input_dir: &str, output_dir: &str, target_size: u8, batch_size: u64) -> std::io::Result<()> {
-    test_print(&format!("\nCompacting files for size {:02} (single batch)...", target_size));
+    test_print(&format!("\nCompacting files for size {:02} (multiple batches)...", target_size));
     test_print(&format!("Target batch size: {} lists per file", batch_size.separated_string()));
 
     let start_time = std::time::Instant::now();
@@ -82,54 +82,61 @@ pub fn compact_size_files(input_dir: &str, output_dir: &str, target_size: u8, ba
     let mut state = GlobalFileState::from_sources(input_dir, target_size)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to load state: {}", e)))?;
 
-    // Build plan from GlobalFileState: collect non-compacted files
-    let mut plan: Vec<(String, u64, u32, u32)> = Vec::new(); // (filename, count, src_batch, tgt_batch)
-    for ((src, tgt, _), info) in state.entries().iter() {
-        if !info.compacted {
-            plan.push((info.filename.clone(), info.nb_lists_in_file, *src, *tgt));
+    let mut total_compacted_files = 0;
+    const MAX_COMPACTED_FILES: usize = 2; // Create up to 2 compacted files per invocation
+
+    // Loop to create multiple compacted files
+    for iteration in 0..MAX_COMPACTED_FILES {
+        test_print(&format!("\n--- Compaction iteration {} ---", iteration + 1));
+
+        // Rebuild plan from current state (may have changed after previous iteration)
+        let mut plan: Vec<(String, u64, u32, u32)> = Vec::new(); // (filename, count, src_batch, tgt_batch)
+        for ((src, tgt, _), info) in state.entries().iter() {
+            if !info.compacted {
+                plan.push((info.filename.clone(), info.nb_lists_in_file, *src, *tgt));
+            }
         }
-    }
 
-    // If no non-compacted files, nothing to do
-    if plan.is_empty() {
-        test_print("   No non-compacted entries found in state; nothing to compact.");
-        return Ok(());
-    }
+        // If no non-compacted files left, we're done
+        if plan.is_empty() {
+            test_print("   No more non-compacted files to compact.");
+            break;
+        }
 
-    // Order by target_batch then source_batch (ascending) to match previous behavior
-    plan.sort_by(|a, b| match a.3.cmp(&b.3) { std::cmp::Ordering::Equal => a.2.cmp(&b.2), other => other });
+        // Order by target_batch then source_batch (ascending)
+        plan.sort_by(|a, b| match a.3.cmp(&b.3) { std::cmp::Ordering::Equal => a.2.cmp(&b.2), other => other });
 
-    // Determine next compacted batch index by scanning existing compacted files
-    let mut next_compact_idx: u32 = 0;
-    if let Ok(entries) = std::fs::read_dir(output_dir) {
-        let mut max_idx: Option<u32> = None;
-        for entry in entries.flatten() {
-            if let Some(name) = entry.file_name().to_str() {
-                if name.ends_with("_compacted.rkyv") && name.contains(&format!("_to_{:02}_batch_", target_size)) {
-                    if let Some(to_pos) = name.find("_to_") {
-                        let after_to = &name[to_pos + 4..];
-                        if let Some(batch_pos) = after_to.rfind("_batch_") {
-                            let start = batch_pos + 7;
-                            let end = after_to.len() - "_compacted.rkyv".len();
-                            if end > start && end <= after_to.len() {
-                                if let Ok(num) = after_to[start..end].parse::<u32>() {
-                                    max_idx = Some(max_idx.map_or(num, |m| m.max(num)));
+        // Determine next compacted batch index by scanning existing compacted files
+        let mut next_compact_idx: u32 = 0;
+        if let Ok(entries) = std::fs::read_dir(output_dir) {
+            let mut max_idx: Option<u32> = None;
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    if name.ends_with("_compacted.rkyv") && name.contains(&format!("_to_{:02}_batch_", target_size)) {
+                        if let Some(to_pos) = name.find("_to_") {
+                            let after_to = &name[to_pos + 4..];
+                            if let Some(batch_pos) = after_to.rfind("_batch_") {
+                                let start = batch_pos + 7;
+                                let end = after_to.len() - "_compacted.rkyv".len();
+                                if end > start && end <= after_to.len() {
+                                    if let Ok(num) = after_to[start..end].parse::<u32>() {
+                                        max_idx = Some(max_idx.map_or(num, |m| m.max(num)));
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
+            if let Some(m) = max_idx { next_compact_idx = m + 1; }
         }
-        if let Some(m) = max_idx { next_compact_idx = m + 1; }
-    }
 
-    // Accumulate lists up to batch_size
-    let mut buffer: Vec<NoSetListSerialized> = Vec::new();
-    let mut contribs: Vec<(u32, u64)> = Vec::new();
-    let mut touched_files: Vec<(String, usize, usize, u32)> = Vec::new(); // (path, consumed, total, src_batch)
-    let source_size = target_size - 1;
-    const READ_CHUNK_SIZE: usize = 2_000_000;
+        // Accumulate lists up to batch_size
+        let mut buffer: Vec<NoSetListSerialized> = Vec::new();
+        let mut contribs: Vec<(u32, u64)> = Vec::new();
+        let mut touched_files: Vec<(String, usize, usize, u32)> = Vec::new(); // (path, consumed, total, src_batch)
+        let source_size = target_size - 1;
+        const READ_CHUNK_SIZE: usize = 2_000_000;
 
     for (fname, _count, src_batch, _tgt_batch) in plan.iter() {
         if buffer.len() as u64 >= batch_size { break; }
@@ -155,92 +162,96 @@ pub fn compact_size_files(input_dir: &str, output_dir: &str, target_size: u8, ba
         }
 
         touched_files.push((path, consumed, total, *src_batch));
-        if consumed > 0 {
-            test_print(&format!("   Copied {:>10} lists from {}", consumed.separated_string(), fname));
-        }
-    }
-
-    if buffer.is_empty() {
-        test_print("   Nothing to compact (batch_size already met by existing compacts or no input)." );
-        return Ok(());
-    }
-
-    // Determine output filename using the last contributor src batch
-    let from_src = contribs.last().map(|c| c.0).unwrap_or(0);
-    let is_full = (buffer.len() as u64) >= batch_size;
-    let output_filename = if is_full {
-        format!("{}/nsl_{:02}_batch_{:06}_to_{:02}_batch_{:06}_compacted.rkyv", output_dir, source_size, from_src, target_size, next_compact_idx)
-    } else {
-        format!("{}/nsl_{:02}_batch_{:06}_to_{:02}_batch_{:06}.rkyv", output_dir, source_size, from_src, target_size, next_compact_idx)
-    };
-
-    // Idempotent skip if already exists
-    if Path::new(&output_filename).exists() {
-        test_print(&format!("   Skipping existing compacted file {}", output_filename));
-        return Ok(());
-    }
-
-    test_print(&format!("   Writing compacted file {} ({} lists)", output_filename, buffer.len().separated_string()));
-    if !crate::io_helpers::save_to_file_serialized(&buffer, &output_filename) {
-        return Err(std::io::Error::new(std::io::ErrorKind::Other, "Failed to write compacted file"));
-    }
-
-    // Register the new compacted file in state IMMEDIATELY after writing
-    let compact_basename = Path::new(&output_filename).file_name().unwrap().to_string_lossy().into_owned();
-    let file_size = std::fs::metadata(&output_filename).ok().map(|m| m.len());
-    let mtime = std::fs::metadata(&output_filename).ok().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64);
-    state.register_file(
-        &compact_basename,
-        from_src,
-        next_compact_idx,
-        buffer.len() as u64,
-        is_full,
-        file_size,
-        mtime,
-    );
-    test_print("   Registered compacted file in state");
-
-    // Flush state IMMEDIATELY (crash-safe checkpoint before modifying original files)
-    state.flush()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to flush state after compacted file: {}", e)))?;
-    test_print("   Flushed state to JSON/TXT (compacted file recorded)");
-
-    // Now safe to modify original files (if crash happens here, compacted file is already in state)
-    for (path, consumed, total, src_batch) in touched_files.iter() {
-        let basename = Path::new(path).file_name().unwrap().to_string_lossy().into_owned();
-        
-        // Extract target batch from the file for state management
-        let tgt_batch = plan.iter().find(|(fname, _, _, _)| fname == &basename).map(|(_, _, _, t)| *t).unwrap_or(0);
-        
-        if *consumed >= *total {
-            test_print(&format!("   Origin file {} fully consumed; deleting", path));
-            std::fs::remove_file(path)?;
-            
-            // Remove from state using proper API
-            state.remove_file(&basename, *src_batch, tgt_batch);
-        } else {
-            let remaining_count = *total - *consumed;
-            test_print(&format!("   Origin file {} partially consumed; rewriting {} remaining lists", path, remaining_count.separated_string()));
-            let remaining_slice = &crate::io_helpers::load_lists_from_file(path)?; // reload to avoid moved ownership
-            let remaining: Vec<NoSetListSerialized> = remaining_slice[*consumed..].to_vec();
-            if !crate::io_helpers::save_to_file_serialized(&remaining, path) {
-                return Err(std::io::Error::new(std::io::ErrorKind::Other, "Failed to rewrite origin file"));
+            if consumed > 0 {
+                test_print(&format!("   Copied {:>10} lists from {}", consumed.separated_string(), fname));
             }
-            
-            // Update state with new count using proper API
-            state.update_count(&basename, *src_batch, tgt_batch, remaining_count as u64);
         }
-    }
 
-    // Final flush to record all file modifications (deletions/shrinks)
-    state.flush()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to flush state after file modifications: {}", e)))?;
-    test_print("   Flushed state to JSON/TXT (file modifications recorded)");
+        if buffer.is_empty() {
+            test_print("   Nothing to compact in this iteration (no more files or batch_size met).");
+            break; // Exit the loop if no more files to compact
+        }
+
+        // Determine output filename using the last contributor src batch
+        let from_src = contribs.last().map(|c| c.0).unwrap_or(0);
+        let is_full = (buffer.len() as u64) >= batch_size;
+        let output_filename = if is_full {
+            format!("{}/nsl_{:02}_batch_{:06}_to_{:02}_batch_{:06}_compacted.rkyv", output_dir, source_size, from_src, target_size, next_compact_idx)
+        } else {
+            format!("{}/nsl_{:02}_batch_{:06}_to_{:02}_batch_{:06}.rkyv", output_dir, source_size, from_src, target_size, next_compact_idx)
+        };
+
+        // Idempotent skip if already exists
+        if Path::new(&output_filename).exists() {
+            test_print(&format!("   Skipping existing compacted file {}", output_filename));
+            break; // Skip this iteration if file already exists
+        }
+
+        test_print(&format!("   Writing compacted file {} ({} lists)", output_filename, buffer.len().separated_string()));
+        if !crate::io_helpers::save_to_file_serialized(&buffer, &output_filename) {
+            return Err(std::io::Error::new(std::io::ErrorKind::Other, "Failed to write compacted file"));
+        }
+
+        // Register the new compacted file in state IMMEDIATELY after writing
+        let compact_basename = Path::new(&output_filename).file_name().unwrap().to_string_lossy().into_owned();
+        let file_size = std::fs::metadata(&output_filename).ok().map(|m| m.len());
+        let mtime = std::fs::metadata(&output_filename).ok().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64);
+        state.register_file(
+            &compact_basename,
+            from_src,
+            next_compact_idx,
+            buffer.len() as u64,
+            is_full,
+            file_size,
+            mtime,
+        );
+        test_print("   Registered compacted file in state");
+
+        // Flush state IMMEDIATELY (crash-safe checkpoint before modifying original files)
+        state.flush()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to flush state after compacted file: {}", e)))?;
+        test_print("   Flushed state to JSON/TXT (compacted file recorded)");
+
+        // Now safe to modify original files (if crash happens here, compacted file is already in state)
+        for (path, consumed, total, src_batch) in touched_files.iter() {
+            let basename = Path::new(path).file_name().unwrap().to_string_lossy().into_owned();
+            
+            // Extract target batch from the file for state management
+            let tgt_batch = plan.iter().find(|(fname, _, _, _)| fname == &basename).map(|(_, _, _, t)| *t).unwrap_or(0);
+            
+            if *consumed >= *total {
+                test_print(&format!("   Origin file {} fully consumed; deleting", path));
+                std::fs::remove_file(path)?;
+                
+                // Remove from state using proper API
+                state.remove_file(&basename, *src_batch, tgt_batch);
+            } else {
+                let remaining_count = *total - *consumed;
+                test_print(&format!("   Origin file {} partially consumed; rewriting {} remaining lists", path, remaining_count.separated_string()));
+                let remaining_slice = &crate::io_helpers::load_lists_from_file(path)?; // reload to avoid moved ownership
+                let remaining: Vec<NoSetListSerialized> = remaining_slice[*consumed..].to_vec();
+                if !crate::io_helpers::save_to_file_serialized(&remaining, path) {
+                    return Err(std::io::Error::new(std::io::ErrorKind::Other, "Failed to rewrite origin file"));
+                }
+                
+                // Update state with new count using proper API
+                state.update_count(&basename, *src_batch, tgt_batch, remaining_count as u64);
+            }
+        }
+
+        // Final flush to record all file modifications (deletions/shrinks) for this iteration
+        state.flush()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to flush state after file modifications: {}", e)))?;
+        test_print("   Flushed state to JSON/TXT (file modifications recorded)");
+
+        total_compacted_files += 1;
+        test_print(&format!("   Compacted file #{} created: {}", total_compacted_files, output_filename));
+        test_print(&format!("   Lists in compacted file: {}", buffer.len().separated_string()));
+    }
 
     let elapsed = start_time.elapsed().as_secs_f64();
     test_print(&format!("\nCompaction completed in {:.2} seconds", elapsed));
-    test_print(&format!("   Compacted file: {}", output_filename));
-    test_print(&format!("   Lists in compacted file: {}", buffer.len().separated_string()));
+    test_print(&format!("   Total compacted files created: {}", total_compacted_files));
 
     Ok(())
 }
