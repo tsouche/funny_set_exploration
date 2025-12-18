@@ -4,7 +4,7 @@ A Rust-based exhaustive search algorithm to find all combinations of 12, 15, and
 
 ## Project Status
 
-**Current Version:** 0.4.10 (December 2025)
+**Current Version:** 0.4.11 (December 2025)
 
 **Key Features:**
 
@@ -47,8 +47,8 @@ A Rust-based exhaustive search algorithm to find all combinations of 12, 15, and
 ### Prerequisites
 
 - Rust toolchain (2024 edition or later)
-- ~12-15GB RAM for processing
-- Significant disk space for output files (~2GB per batch file)
+- ~12-15GB RAM for processing (32GB preferable)
+- Significant disk space for output files (~1GB per batch file)
 
 ### Build and Run
 
@@ -83,6 +83,9 @@ cargo build --release
 
 # Compact small files into larger batches
 ./target/release/funny_set_exploration --compact 8 -o T:\data\funny_set_exploration
+
+# Compact small files into larger batches up to a certain file number
+./target/release/funny_set_exploration --compact 8 12 -o T:\data\funny_set_exploration
 ```
 
 ### CLI Options

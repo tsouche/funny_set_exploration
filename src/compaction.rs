@@ -68,9 +68,12 @@ fn save_compacted_batch_atomic(filepath: &str, lists: &[NoSetListSerialized]) ->
 /// - Creates multiple compacted files in a row (up to 2 by default).
 /// - After EACH compacted file: deletes/shrinks consumed files and flushes state.
 /// - Crash-safe: state persisted after each compacted file creation.
-pub fn compact_size_files(input_dir: &str, output_dir: &str, target_size: u8, batch_size: u64) -> std::io::Result<()> {
+pub fn compact_size_files(input_dir: &str, output_dir: &str, target_size: u8, batch_size: u64, max_batch: Option<u32>) -> std::io::Result<()> {
     test_print(&format!("\nCompacting files for size {:02} (multiple batches)...", target_size));
     test_print(&format!("Target batch size: {} lists per file", batch_size.separated_string()));
+    if let Some(max) = max_batch {
+        test_print(&format!("Max output batch: {} (will stop after processing this batch)", max));
+    }
 
     let start_time = std::time::Instant::now();
 
@@ -94,13 +97,26 @@ pub fn compact_size_files(input_dir: &str, output_dir: &str, target_size: u8, ba
         let mut plan: Vec<(String, u64, u32, u32)> = Vec::new(); // (filename, count, src_batch, tgt_batch)
         for ((src, tgt, _), info) in state.entries().iter() {
             if !info.compacted {
-                plan.push((info.filename.clone(), info.nb_lists_in_file, *src, *tgt));
+                // If max_batch is specified, only include files with tgt_batch <= max_batch
+                if let Some(max) = max_batch {
+                    if *tgt <= max {
+                        plan.push((info.filename.clone(), info.nb_lists_in_file, *src, *tgt));
+                    }
+                } else {
+                    plan.push((info.filename.clone(), info.nb_lists_in_file, *src, *tgt));
+                }
             }
         }
 
         // If no non-compacted files left, we're done
         if plan.is_empty() {
             test_print("   No more non-compacted files to compact.");
+            break;
+        }
+
+        // If only ONE non-compacted file remains, there's nothing to compact - stop here
+        if plan.len() == 1 {
+            test_print(&format!("   Only one non-compacted file remains ({}); nothing to compact.", plan[0].0));
             break;
         }
 
@@ -195,16 +211,23 @@ pub fn compact_size_files(input_dir: &str, output_dir: &str, target_size: u8, ba
         let compact_basename = Path::new(&output_filename).file_name().unwrap().to_string_lossy().into_owned();
         let file_size = std::fs::metadata(&output_filename).ok().map(|m| m.len());
         let mtime = std::fs::metadata(&output_filename).ok().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64);
+        
+        // Only mark as "compacted" if file is full (>= 10M lists)
+        // Partial files are NOT marked as compacted so they can be merged with future files
+        if !is_full {
+            test_print(&format!("   Note: File has {} lists (< 10M); NOT marking as compacted for future merging", buffer.len().separated_string()));
+        }
+        
         state.register_file(
             &compact_basename,
             from_src,
             final_compact_idx,
             buffer.len() as u64,
-            true,  // Always mark as compacted, regardless of size
+            is_full,  // Only full files are marked as compacted
             file_size,
             mtime,
         );
-        test_print("   Registered compacted file in state");
+        test_print(&format!("   Registered file in state (compacted={})", is_full));
 
         // Flush state IMMEDIATELY (crash-safe checkpoint before modifying original files)
         state.flush()
@@ -246,6 +269,13 @@ pub fn compact_size_files(input_dir: &str, output_dir: &str, target_size: u8, ba
         total_compacted_files += 1;
         test_print(&format!("   Compacted file #{} created: {}", total_compacted_files, output_filename));
         test_print(&format!("   Lists in compacted file: {}", buffer.len().separated_string()));
+        
+        // If we created a partial file and max_batch is set, stop here
+        // The partial file will be picked up in the next compaction wave
+        if !is_full && max_batch.is_some() {
+            test_print(&format!("   Stopping compaction: created partial file at max_batch limit"));
+            break;
+        }
     }
 
     let elapsed = start_time.elapsed().as_secs_f64();

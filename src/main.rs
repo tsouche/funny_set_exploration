@@ -1,8 +1,9 @@
 /// Manage the search for the grail of Set: combinations of 12 / 15 / 18 cards 
 /// with no sets
 ///
-/// Version 0.4.10 - Fixed infinite compaction loop for non-full final files
-/// Fixed: Compacted files now always marked as compacted regardless of size
+/// Version 0.4.11 - Enhanced compaction with max batch limit
+/// Fixed: find_input_filename bug (removed incorrect size-1 adjustment)
+/// Added: Optional max_batch parameter to --compact for controlled compaction
 /// 
 /// CLI Usage:
 ///   funny.exe --size 3 -o .\output                          # Create seed lists (size 3)
@@ -11,6 +12,8 @@
 ///   funny.exe --unitary 5 2 -i .\input -o .\output          # Process only input batch 2
 ///   funny.exe --count 6 -i .\output                         # Count size 6 files
 ///   funny.exe --check 6 -o .\output                         # Check size 6 integrity
+///   funny.exe --compact 15 -i .\14_to_15                    # Compact all size 15 files
+///   funny.exe --compact 15 5000 -i .\14_to_15               # Compact up to batch 5000
 ///   funny.exe                                               # Default mode (sizes 4-18)
 ///
 /// Arguments:
@@ -88,13 +91,16 @@ use crate::utils::*;
         "     (defaults to current dir).\n",
         "   - --force/--keep_state: not applicable.\n",
         "   - Example: --check 8 -o ./out\n\n",
-        "5) Compact mode (`--compact <SIZE>`)\n",
-        "   - Purpose: Consolidate many small output files into\n",
-        "     larger batches.\n",
-        "   - Input path (-i): dir containing files to compact.\n",
-        "   - Output path (-o): dir to write compacted files\n",
-        "     (defaults to input).\n",
-        "   - Example: --compact 12 -i ./out -o ./compacted\n\n",
+        "5) Compact mode (`--compact <SIZE> [MAX_BATCH]`)\\n",
+        "   - Purpose: Consolidate many small output files into\\n",
+        "     larger batches.\\n",
+        "   - Optional MAX_BATCH: stop compaction after processing\\n",
+        "     files up to this output batch number.\\n",
+        "   - Input path (-i): dir containing files to compact.\\n",
+        "   - Output path (-o): dir to write compacted files\\n",
+        "     (defaults to input).\\n",
+        "   - Example: --compact 12 -i ./out\\n",
+        "   - Example: --compact 12 5000 -i ./out (stop at batch 5000)\\n\\n",
         "6) Legacy-count mode (`--legacy-count <SIZE>` )\n",
         "   - Purpose: Read existing global/intermediary counts and\n",
         "     emit nsl_{size}_global_info.json/.txt without\n",
@@ -136,10 +142,11 @@ struct Args {
     #[arg(long, conflicts_with_all = ["size", "unitary", "count", "compact", "check"], help = "Legacy count: emit global info JSON/TXT from existing count files")]
     legacy_count: Option<u8>,
 
-    /// Compact small output files into larger batches: <SIZE>
+    /// Compact small output files into larger batches: <SIZE> [MAX_BATCH]
     /// Consolidates multiple small output files into larger batches.
-    #[arg(long, conflicts_with_all = ["size", "unitary", "count", "check"], help = "Compact small files into larger batches for a target size")]
-    compact: Option<u8>,
+    /// Optional MAX_BATCH parameter stops compaction after processing files up to that batch number.
+    #[arg(long, num_args = 1..=2, value_names = ["SIZE", "MAX_BATCH"], conflicts_with_all = ["size", "unitary", "count", "check"], help = "Compact small files into larger batches for a target size, optionally up to MAX_BATCH")]
+    compact: Option<Vec<u32>>,
 
     /// Check repository integrity for a specific size
     /// Analyze files and count data for missing batches or files.
@@ -178,7 +185,7 @@ enum ProcessingMode {
     Count { size: u8 },
     LegacyCount { size: u8 },
     Check { size: u8 },
-    Compact { size: u8 },
+    Compact { size: u8, max_batch: Option<u32> },
     Size { size: u8, start_batch: Option<u32> },
     Unitary { size: u8, batch: u32 },
     Default,
@@ -270,9 +277,15 @@ fn print_directories(input: &str, output: &str) {
 /// Build unified configuration from parsed arguments
 fn build_config(args: &Args, max_per_file: u64) -> Result<ProcessingConfig, String> {
     // Determine processing mode from arguments
-    let mode = if let Some(compact_size) = args.compact {
+    let mode = if let Some(ref compact_vec) = args.compact {
+        let compact_size = compact_vec[0] as u8;
         validate_size(compact_size, "Compact", 3, 18)?;
-        ProcessingMode::Compact { size: compact_size }
+        let max_batch = if compact_vec.len() == 2 {
+            Some(compact_vec[1])
+        } else {
+            None
+        };
+        ProcessingMode::Compact { size: compact_size, max_batch }
     } else if let Some(legacy_size) = args.legacy_count {
         validate_size(legacy_size, "Legacy-count", 3, 18)?;
         ProcessingMode::LegacyCount { size: legacy_size }
@@ -388,9 +401,9 @@ fn execute_mode(config: &ProcessingConfig) -> Result<String, String> {
             Ok("Check completed successfully".to_string())
         },
         
-        ProcessingMode::Compact { size } => {
+        ProcessingMode::Compact { size, max_batch } => {
             // Banner is printed by compact_size_files function
-            compact_size_files(&config.input_dir, &config.output_dir, *size, config.max_lists_per_file)
+            compact_size_files(&config.input_dir, &config.output_dir, *size, config.max_lists_per_file, *max_batch)
                 .map_err(|e| format!("Error during compaction: {}", e))?;
             Ok("Compaction completed successfully".to_string())
         },

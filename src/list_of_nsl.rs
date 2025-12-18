@@ -1598,8 +1598,8 @@ pub fn check_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
 
 /// Compact small output files into larger 10M-entry batches
 /// Delegates to the `compaction` module which implements idempotent, atomic compaction.
-pub fn compact_size_files(input_dir: &str, output_dir: &str, target_size: u8, batch_size: u64) -> std::io::Result<()> {
-    crate::compaction::compact_size_files(input_dir, output_dir, target_size, batch_size)
+pub fn compact_size_files(input_dir: &str, output_dir: &str, target_size: u8, batch_size: u64, max_batch: Option<u32>) -> std::io::Result<()> {
+    crate::compaction::compact_size_files(input_dir, output_dir, target_size, batch_size, max_batch)
 }
 
 /// Load lists from a file (helper for compact mode)

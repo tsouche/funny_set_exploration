@@ -5,6 +5,23 @@ All notable changes to the funny_set_exploration project are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.11] - 2025-12-18
+
+### Added
+
+- **Compact mode enhancement**: Optional max_batch parameter to stop compaction at a specific output batch
+  - Usage: `--compact <SIZE> [MAX_BATCH]`
+  - Allows controlled compaction of file ranges
+  - Only processes files with target_batch <= max_batch
+  - Example: `--compact 15 5000` compacts files up to batch 5000
+
+### Fixed
+
+- **find_input_filename bug**: Removed incorrect size-1 adjustment
+  - Function was subtracting 1 from input_size when it already received the correct size
+  - Caused restart mode to fail (looking for wrong batch numbers)
+  - Now correctly matches files with the input size as specified
+
 ## [0.4.10] - 2025-12-17
 
 ### Fixed
