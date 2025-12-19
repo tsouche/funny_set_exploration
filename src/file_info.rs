@@ -104,45 +104,215 @@ impl GlobalFileInfo {
 
     /// Load from intermediary count files in a directory and build aggregated entries.
     /// This avoids reading all .rkyv files by trusting the intermediary counts.
-    pub fn from_intermediary_files(base_path: &str, target_size: u8) -> std::io::Result<Self> {
+    /// Idempotent: loads existing JSON first and only processes missing source batches.
+    /// If force=true, ignores existing JSON and rebuilds from scratch.
+    pub fn from_intermediary_files(base_path: &str, target_size: u8, force: bool) -> std::io::Result<Self> {
+        use crate::utils::test_print;
+        use separator::Separatable;
+        
         let mut all_file_info: BTreeMap<(u32, u32), (String, u64, bool)> = BTreeMap::new();
         let mut seen_files: HashSet<String> = HashSet::new();
+        let mut processed_source_batches: HashSet<u32> = HashSet::new();
         let pattern_new = format!("nsl_{:02}_intermediate_count_from_{:02}_", target_size, target_size - 1);
         let legacy_pattern = format!("no_set_list_input_intermediate_count_{:02}_", target_size - 1);
-
+        
+        // Step 1: Try to load existing JSON file (unless force mode)
+        let json_path = Path::new(base_path).join(format!("nsl_{:02}_global_info.json", target_size));
+        if !force && json_path.exists() {
+            test_print(&format!("   ... Loading existing JSON file: {}", json_path.display()));
+            match Self::load_json(&json_path) {
+                Ok(existing_gfi) => {
+                    // Extract existing data
+                    for entry in existing_gfi.entries {
+                        let key = (entry.source_batch, entry.target_batch);
+                        all_file_info.insert(key, (entry.filename.clone(), entry.nb_lists_in_file, entry.compacted));
+                        seen_files.insert(entry.filename.clone());
+                        processed_source_batches.insert(entry.source_batch);
+                    }
+                    let unique_batches: HashSet<u32> = all_file_info.keys().map(|(src, _)| *src).collect();
+                    test_print(&format!("   ... Loaded {} output files from {} input batches", 
+                        all_file_info.len().separated_string(), unique_batches.len()));
+                }
+                Err(e) => {
+                    test_print(&format!("   ... Warning: Could not load existing JSON: {}", e));
+                    test_print("   ... Will rebuild from scratch");
+                }
+            }
+        }
+        
+        // Step 2: Collect all intermediary files and extract their source batch numbers
+        let mut intermediary_files_with_batches: Vec<(std::path::PathBuf, u32)> = Vec::new();
         for entry in fs::read_dir(base_path)? {
             if let Ok(e) = entry {
                 if let Some(name) = e.file_name().to_str() {
                     if (name.starts_with(&pattern_new) || name.starts_with(&legacy_pattern)) && name.ends_with(".txt") {
-                        let path = e.path();
-                        let file = fs::File::open(&path)?;
-                        let reader = std::io::BufReader::new(file);
-                        for line in reader.lines() {
-                            let line = line?;
-                            if line.trim().starts_with("...") {
-                                let parts: Vec<&str> = line.split_whitespace().collect();
-                                if parts.len() >= 5 {
-                                    if let Ok(count) = parts[1].parse::<u64>() {
-                                        let filename = parts[4];
-                                        if seen_files.contains(filename) {
-                                            continue;
-                                        }
-                                        let (src_batch, tgt_batch) = match parse_batches(filename) {
-                                            Some(v) => v,
-                                            None => continue,
-                                        };
-                                        let compacted = filename.contains("_compacted.rkyv");
-                                        seen_files.insert(filename.to_string());
-                                        all_file_info.insert((src_batch, tgt_batch), (filename.to_string(), count, compacted));
-                                    }
-                                }
+                        // Extract source batch number from filename
+                        if let Some(batch_str) = name.rsplit('_').next().and_then(|s| s.strip_suffix(".txt")) {
+                            if let Ok(batch) = batch_str.parse::<u32>() {
+                                intermediary_files_with_batches.push((e.path(), batch));
                             }
                         }
                     }
                 }
             }
         }
+        
+        if intermediary_files_with_batches.is_empty() {
+            if all_file_info.is_empty() {
+                test_print("   ... No intermediary count files found, scanning .rkyv files directly...");
+                let scanned = scan_rkyv_files(base_path, target_size)?;
+                return Ok(Self { entries: scanned });
+            } else {
+                // We have data from JSON, no new intermediary files to process
+                test_print("   ... No new intermediary files to process, using existing JSON data");
+                let mut entries: Vec<FileInfo> = all_file_info
+                    .into_iter()
+                    .map(|((src, tgt), (fname, count, compacted))| FileInfo {
+                        source_batch: src,
+                        target_batch: tgt,
+                        cumulative_nb_lists: 0,
+                        nb_lists_in_file: count,
+                        filename: fname,
+                        compacted,
+                        exists: None,
+                        file_size_bytes: None,
+                        modified_timestamp: None,
+                    })
+                    .collect();
+                entries.sort_by(|a, b| match a.target_batch.cmp(&b.target_batch) {
+                    std::cmp::Ordering::Equal => a.source_batch.cmp(&b.source_batch),
+                    other => other,
+                });
+                let mut cumulative = 0u64;
+                for e in entries.iter_mut() {
+                    cumulative += e.nb_lists_in_file;
+                    e.cumulative_nb_lists = cumulative;
+                }
+                return Ok(Self { entries });
+            }
+        }
+        
+        // Step 3: Filter to only unprocessed batches
+        let mut files_to_process: Vec<(std::path::PathBuf, u32)> = intermediary_files_with_batches
+            .into_iter()
+            .filter(|(_, batch)| !processed_source_batches.contains(batch))
+            .collect();
+        files_to_process.sort_by_key(|(_, batch)| *batch);
+        
+        let total_files = files_to_process.len();
+        let already_processed = processed_source_batches.len();
+        
+        if total_files == 0 {
+            test_print(&format!("   ... All {} input batches already processed in JSON", already_processed));
+            // Return existing data
+            let mut entries: Vec<FileInfo> = all_file_info
+                .into_iter()
+                .map(|((src, tgt), (fname, count, compacted))| FileInfo {
+                    source_batch: src,
+                    target_batch: tgt,
+                    cumulative_nb_lists: 0,
+                    nb_lists_in_file: count,
+                    filename: fname,
+                    compacted,
+                    exists: None,
+                    file_size_bytes: None,
+                    modified_timestamp: None,
+                })
+                .collect();
+            entries.sort_by(|a, b| match a.target_batch.cmp(&b.target_batch) {
+                std::cmp::Ordering::Equal => a.source_batch.cmp(&b.source_batch),
+                other => other,
+            });
+            let mut cumulative = 0u64;
+            for e in entries.iter_mut() {
+                cumulative += e.nb_lists_in_file;
+                e.cumulative_nb_lists = cumulative;
+            }
+            return Ok(Self { entries });
+        }
+        
+        test_print(&format!("   ... {} input batches already processed, {} new batches to process", 
+            already_processed, total_files));
+        test_print(&format!("   ... Reading {} new intermediary files and updating registry...", total_files));
+        
+        let save_interval = 20; // Save every 20 files
+        
+        for (idx, (path, source_batch)) in files_to_process.iter().enumerate() {
+            let file_num = idx + 1;
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                // Show progress every file
+                test_print(&format!("   ... [{:>4}/{:<4}] Reading: {} (input batch {:06})", file_num, total_files, name, source_batch));
+                
+                let file = fs::File::open(&path)?;
+                let reader = std::io::BufReader::new(file);
+                let mut lines_in_file = 0;
+                for line in reader.lines() {
+                    let line = line?;
+                    if line.trim().starts_with("...") {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        if parts.len() >= 5 {
+                            if let Ok(count) = parts[1].parse::<u64>() {
+                                let filename = parts[4];
+                                if seen_files.contains(filename) {
+                                    continue;
+                                }
+                                let (src_batch, tgt_batch) = match parse_batches(filename) {
+                                    Some(v) => v,
+                                    None => continue,
+                                };
+                                let compacted = filename.contains("_compacted.rkyv");
+                                seen_files.insert(filename.to_string());
+                                all_file_info.insert((src_batch, tgt_batch), (filename.to_string(), count, compacted));
+                                lines_in_file += 1;
+                            }
+                        }
+                    }
+                }
+                test_print(&format!("             ... {} output files tracked in this intermediary", lines_in_file));
+                
+                // Save progress every save_interval files
+                if file_num % save_interval == 0 || file_num == total_files {
+                    test_print(&format!("   ... Saving intermediate progress ({} files processed, {} unique output files)...", 
+                        file_num, all_file_info.len().separated_string()));
+                    
+                    // Build current entries and save to JSON
+                    let mut entries: Vec<FileInfo> = all_file_info
+                        .iter()
+                        .map(|((src, tgt), (fname, count, compacted))| FileInfo {
+                            source_batch: *src,
+                            target_batch: *tgt,
+                            cumulative_nb_lists: 0,
+                            nb_lists_in_file: *count,
+                            filename: fname.clone(),
+                            compacted: *compacted,
+                            exists: None,
+                            file_size_bytes: None,
+                            modified_timestamp: None,
+                        })
+                        .collect();
+                    
+                    entries.sort_by(|a, b| match a.target_batch.cmp(&b.target_batch) {
+                        std::cmp::Ordering::Equal => a.source_batch.cmp(&b.source_batch),
+                        other => other,
+                    });
+                    
+                    let mut cumulative = 0u64;
+                    for e in entries.iter_mut() {
+                        cumulative += e.nb_lists_in_file;
+                        e.cumulative_nb_lists = cumulative;
+                    }
+                    
+                    let temp_gfi = GlobalFileInfo { entries };
+                    if let Err(e) = temp_gfi.save_json(&json_path) {
+                        test_print(&format!("   ... Warning: Could not save intermediate progress: {}", e));
+                    }
+                }
+            }
+        }
 
+        test_print(&format!("   ... Completed reading {} intermediary files, found {} unique output files", 
+            total_files, all_file_info.len().separated_string()));
+        
         let mut entries: Vec<FileInfo> = all_file_info
             .into_iter()
             .map(|((src, tgt), (fname, count, compacted))| FileInfo {
@@ -160,6 +330,7 @@ impl GlobalFileInfo {
 
         // If no intermediary info was found (common for seeds/size 03), fall back to scanning .rkyv files directly.
         if entries.is_empty() {
+            debug_print(&format!("   ... No intermediary files found, scanning .rkyv files directly..."));
             let scanned = scan_rkyv_files(base_path, target_size)?;
             return Ok(Self { entries: scanned });
         }
@@ -223,7 +394,7 @@ impl GlobalFileState {
             let gfi = GlobalFileInfo::from_global_count_file(&legacy_space)?;
             return Ok(Self::from_vec(base_dir, target_size, gfi.entries));
         }
-        let gfi = GlobalFileInfo::from_intermediary_files(base_dir, target_size)?;
+        let gfi = GlobalFileInfo::from_intermediary_files(base_dir, target_size, false)?;
         Ok(Self::from_vec(base_dir, target_size, gfi.entries))
     }
 

@@ -374,12 +374,21 @@ fn execute_mode(config: &ProcessingConfig) -> Result<String, String> {
                 None
             };
 
-            let gfi_res = if let Some(path) = global_path {
-                test_print(&format!("Reading existing global count {}", path.display()));
-                GlobalFileInfo::from_global_count_file(&path)
+            let gfi_res = if !config.force_recount && global_path.is_some() {
+                let path = global_path.unwrap();
+                test_print(&format!("Reading existing global count {}...", path.display()));
+                let result = GlobalFileInfo::from_global_count_file(&path);
+                if let Ok(ref gfi) = result {
+                    test_print(&format!("   ... Loaded {} file entries from global count", gfi.entries.len()));
+                }
+                result
             } else {
-                test_print("Global count not found; reading intermediary files or scanning rkyv files...");
-                GlobalFileInfo::from_intermediary_files(input_base, *size)
+                if config.force_recount {
+                    test_print("FORCE MODE: Ignoring existing files, rebuilding from intermediary files...");
+                } else {
+                    test_print("Global count not found; reading intermediary files or scanning rkyv files...");
+                }
+                GlobalFileInfo::from_intermediary_files(input_base, *size, config.force_recount)
             };
 
             let mut gfi = gfi_res.map_err(|e| format!("Error loading counts: {}", e))?;

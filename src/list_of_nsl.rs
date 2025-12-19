@@ -712,7 +712,7 @@ pub fn count_size_files(base_path: &str, target_size: u8, force: bool, keep_stat
     
     let start_time = std::time::Instant::now();
     
-    // Step 1: Scan for all .rkyv files
+    // Step 1: Scan for all .rkyv files in directory
     let entries = fs::read_dir(base_path)?;
     let pattern = format!("_to_{:02}_batch_", target_size);
     
@@ -726,11 +726,30 @@ pub fn count_size_files(base_path: &str, target_size: u8, force: bool, keep_stat
     }
     all_files.sort();
     
-    // Step 2: Find all intermediary input count files for this size
+    // Step 2: Load existing global info if available (unless force mode)
     use std::collections::{BTreeMap, HashSet};
-    let mut intermediary_files: Vec<String> = Vec::new();
+    use crate::file_info::GlobalFileState;
     let mut all_file_info: BTreeMap<(u32, u32), (String, u64, bool)> = BTreeMap::new();
     let mut seen_files: HashSet<String> = HashSet::new();
+    
+    if !force {
+        // Try to load existing global info (JSON or txt)
+        if let Ok(existing_state) = GlobalFileState::from_sources(base_path, target_size) {
+            test_print("   ... Loading existing global info file...");
+            for (key, file_info) in existing_state.entries() {
+                let filename = &file_info.filename;
+                seen_files.insert(filename.clone());
+                all_file_info.insert(
+                    (file_info.source_batch, file_info.target_batch),
+                    (filename.clone(), file_info.nb_lists_in_file, file_info.compacted)
+                );
+            }
+            test_print(&format!("   ... Loaded {} files from existing global info", all_file_info.len()));
+        }
+    }
+    
+    // Step 3: Find all intermediary input count files for this size
+    let mut intermediary_files: Vec<String> = Vec::new();
 
     // Find all input-intermediary files for this target size: nsl_{target}_intermediate_count_from_{source}_*.txt
     // Also accept legacy 'no_set_list_input_intermediate_count_{source}_*.txt' for robustness
@@ -967,6 +986,56 @@ pub fn count_size_files(base_path: &str, target_size: u8, force: bool, keep_stat
     // Flush any remaining display buffer
     if !display_buffer.is_empty() {
         progress_print(&format!("   ... reading batches: {}", display_buffer.join(" ")));
+    }
+
+    // Step 4: Scan directory for files not in all_file_info (missing from JSON/intermediaries)
+    test_print(&format!("   ... Scanning directory for files not yet tracked..."));
+    let mut files_added_from_scan = 0;
+    for file_path in &all_files {
+        if let Some(name) = file_path.file_name().and_then(|n| n.to_str()) {
+            let filename = name.to_string();
+            if !seen_files.contains(&filename) {
+                // Parse batch numbers from filename
+                if let Some(to_pos) = name.find("_to_") {
+                    let before_to = &name[..to_pos];
+                    let after_raw = &name[to_pos + 4..];
+                    let after_to = if let Some(stripped) = after_raw.strip_suffix("_compacted.rkyv") {
+                        stripped
+                    } else if let Some(stripped) = after_raw.strip_suffix(".rkyv") {
+                        stripped
+                    } else {
+                        after_raw
+                    };
+                    if let Some(src_batch_pos) = before_to.rfind("_batch_") {
+                        let src_batch_str = &before_to[src_batch_pos + 7..];
+                        if let Ok(srcb) = src_batch_str.parse::<u32>() {
+                            if let Some(tgt_batch_pos) = after_to.rfind("_batch_") {
+                                let tgt_batch_str = &after_to[tgt_batch_pos + 7..];
+                                if let Ok(tgtb) = tgt_batch_str.parse::<u32>() {
+                                    // Count lists in this file
+                                    use memmap2::Mmap;
+                                    if let Ok(file) = fs::File::open(file_path) {
+                                        if let Ok(mmap) = unsafe { Mmap::map(&file) } {
+                                            if let Ok(arch) = check_archived_root::<Vec<NoSetListSerialized>>(&mmap[..]) {
+                                                let count = arch.len() as u64;
+                                                let is_compacted = name.contains("_compacted.rkyv");
+                                                all_file_info.insert((srcb, tgtb), (filename.clone(), count, is_compacted));
+                                                seen_files.insert(filename.clone());
+                                                files_added_from_scan += 1;
+                                                progress_print(&format!("   ... Found missing file: {} ({} lists)", filename, count.separated_string()));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if files_added_from_scan > 0 {
+        test_print(&format!("   ... Added {} files from directory scan", files_added_from_scan));
     }
 
     // If no entries were collected, we're done
