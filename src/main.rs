@@ -107,6 +107,12 @@ use crate::utils::*;
         "     recomputing intermediaries.\n",
         "   - Input path (-i): directory with count files (.txt).\n",
         "   - Output path: not used.\n\n",
+        "7) Create-JSON mode (`--create-json <SIZE>`)\n",
+        "   - Purpose: Export human-readable JSON and TXT files from\n",
+        "     the rkyv state file (write-only, for inspection).\n",
+        "   - Input path (-i): directory with rkyv state file.\n",
+        "   - Output path: not used.\n",
+        "   - Example: --create-json 10 -i ./09_to_10\n\n",
         "COMMON FLAGS: -i/--input-path, -o/--output-path, --force,\n",
         "  --keep_state\n",
         "  The sections above show how each flag affects specific\n",
@@ -141,6 +147,10 @@ struct Args {
     /// Legacy count: read existing global/intermediary counts and emit global info JSON/TXT
     #[arg(long, conflicts_with_all = ["size", "unitary", "count", "compact", "check"], help = "Legacy count: emit global info JSON/TXT from existing count files")]
     legacy_count: Option<u8>,
+    
+    /// Create human-readable JSON/TXT exports from rkyv state file
+    #[arg(long, conflicts_with_all = ["size", "unitary", "count", "compact", "check", "legacy_count"], help = "Export JSON and TXT files from rkyv state (human-readable format)")]
+    create_json: Option<u8>,
 
     /// Compact small output files into larger batches: <SIZE> [MAX_BATCH]
     /// Consolidates multiple small output files into larger batches.
@@ -184,6 +194,7 @@ struct ProcessingConfig {
 enum ProcessingMode {
     Count { size: u8 },
     LegacyCount { size: u8 },
+    CreateJson { size: u8 },
     Check { size: u8 },
     Compact { size: u8, max_batch: Option<u32> },
     Size { size: u8, start_batch: Option<u32> },
@@ -197,6 +208,7 @@ impl ProcessingMode {
         matches!(self, 
             ProcessingMode::Count { .. } | 
             ProcessingMode::LegacyCount { .. } |
+            ProcessingMode::CreateJson { .. } |
             ProcessingMode::Check { .. } | 
             ProcessingMode::Compact { .. })
     }
@@ -224,6 +236,9 @@ fn resolve_paths(
             (input_arg.unwrap_or(".").to_string(), String::new())
         },
         ProcessingMode::LegacyCount { .. } => {
+            (input_arg.unwrap_or(".").to_string(), String::new())
+        },
+        ProcessingMode::CreateJson { .. } => {
             (input_arg.unwrap_or(".").to_string(), String::new())
         },
         ProcessingMode::Check { .. } => {
@@ -289,6 +304,9 @@ fn build_config(args: &Args, max_per_file: u64) -> Result<ProcessingConfig, Stri
     } else if let Some(legacy_size) = args.legacy_count {
         validate_size(legacy_size, "Legacy-count", 3, 18)?;
         ProcessingMode::LegacyCount { size: legacy_size }
+    } else if let Some(create_json_size) = args.create_json {
+        validate_size(create_json_size, "Create-json", 3, 18)?;
+        ProcessingMode::CreateJson { size: create_json_size }
     } else if let Some(check_size) = args.check {
         validate_size(check_size, "Check", 3, 18)?;
         ProcessingMode::Check { size: check_size }
@@ -362,45 +380,260 @@ fn execute_mode(config: &ProcessingConfig) -> Result<String, String> {
         },
 
         ProcessingMode::LegacyCount { size } => {
+            use crate::file_info::GlobalFileState;
+            use std::collections::{BTreeMap, HashSet};
+            use std::io::BufRead;
+            
             let input_base = &config.input_dir;
-            let output_base = &config.output_dir;
-            let primary = Path::new(input_base).join(format!("nsl_{:02}_global_count.txt", size));
-            let legacy_space = Path::new(input_base).join(format!("nsl_{:02}_global count.txt", size));
-            let global_path = if primary.exists() {
-                Some(primary)
-            } else if legacy_space.exists() {
-                Some(legacy_space)
-            } else {
-                None
-            };
-
-            let gfi_res = if !config.force_recount && global_path.is_some() {
-                let path = global_path.unwrap();
-                test_print(&format!("Reading existing global count {}...", path.display()));
-                let result = GlobalFileInfo::from_global_count_file(&path);
-                if let Ok(ref gfi) = result {
-                    test_print(&format!("   ... Loaded {} file entries from global count", gfi.entries.len()));
+            test_print(&format!("Legacy-count mode for size {:02}", size));
+            
+            // Step 1: Load from JSON first (authoritative format if available)
+            let mut state = GlobalFileState::from_sources(input_base, *size)
+                .unwrap_or_else(|_| {
+                    test_print("   ... No existing state found, starting fresh");
+                    GlobalFileState::new(input_base, *size)
+                });
+            
+            let initial_count = state.entries().len();
+            let mut seen_files: HashSet<String> = state.entries().keys()
+                .map(|(_, _, filename)| filename.clone())
+                .collect();
+            let mut processed_batches: HashSet<u32> = state.entries().values()
+                .map(|e| e.source_batch)
+                .collect();
+            
+            test_print(&format!("   ... Loaded {} files from {} source batches", 
+                initial_count, processed_batches.len()));
+            
+            // Step 2: Complement with intermediary count files
+            let mut files_added = 0;
+            let mut added_from_rkyv = 0;
+            let pattern = format!("nsl_{:02}_intermediate_count_from_{:02}_", size, size - 1);
+            let mut intermediary_files: Vec<(std::path::PathBuf, u32)> = Vec::new();
+            
+            for entry in fs::read_dir(input_base).map_err(|e| format!("Error reading directory: {}", e))? {
+                if let Ok(e) = entry {
+                    if let Some(name) = e.file_name().to_str() {
+                        if name.starts_with(&pattern) && name.ends_with(".txt") {
+                            if let Some(batch_str) = name.rsplit('_').next().and_then(|s| s.strip_suffix(".txt")) {
+                                if let Ok(batch) = batch_str.parse::<u32>() {
+                                    intermediary_files.push((e.path(), batch));
+                                }
+                            }
+                        }
+                    }
                 }
-                result
-            } else {
-                if config.force_recount {
-                    test_print("FORCE MODE: Ignoring existing files, rebuilding from intermediary files...");
+            }
+            
+            intermediary_files.sort_by_key(|(_, batch)| *batch);
+            let unprocessed: Vec<_> = intermediary_files.iter()
+                .filter(|(_, batch)| !processed_batches.contains(batch))
+                .collect();
+            
+            if !unprocessed.is_empty() {
+                test_print(&format!("   ... Found {} unprocessed intermediate count files", unprocessed.len()));
+                
+                for (path, batch) in unprocessed {
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        let file = fs::File::open(path).map_err(|e| format!("Error opening {}: {}", name, e))?;
+                        let reader = std::io::BufReader::new(file);
+                        
+                        let mut lines_processed = 0;
+                        for line in reader.lines() {
+                            let line = line.map_err(|e| format!("Error reading line: {}", e))?;
+                            // Strip UTF-8 BOM if present
+                            let line_clean = line.strip_prefix('\u{FEFF}').unwrap_or(&line);
+                            let trimmed = line_clean.trim();
+                            
+                            if trimmed.starts_with("...") {
+                                // Parse: "...  8528436 lists in filename.rkyv"
+                                if let Some(rest) = trimmed.strip_prefix("...") {
+                                    let rest = rest.trim();
+                                    let parts: Vec<&str> = rest.split_whitespace().collect();
+                                    if parts.len() >= 4 && parts[1] == "lists" && parts[2] == "in" {
+                                        if let Ok(count) = parts[0].parse::<u64>() {
+                                            let filename = parts[3].to_string();
+                                            
+                                            if seen_files.contains(&filename) {
+                                                continue;
+                                            }
+                                            
+                                            // Parse batch numbers from filename
+                                            if let Some(to_pos) = filename.find("_to_") {
+                                                let before_to = &filename[..to_pos];
+                                                let after_raw = &filename[to_pos + 4..];
+                                                let after_to = after_raw
+                                                    .strip_suffix("_compacted.rkyv")
+                                                    .or_else(|| after_raw.strip_suffix(".rkyv"))
+                                                    .unwrap_or(after_raw);
+                                                
+                                                if let Some(src_pos) = before_to.rfind("_batch_") {
+                                                    if let Ok(src_batch) = before_to[src_pos + 7..].parse::<u32>() {
+                                                        if let Some(tgt_pos) = after_to.rfind("_batch_") {
+                                                            if let Ok(tgt_batch) = after_to[tgt_pos + 7..].parse::<u32>() {
+                                                                let is_compacted = filename.contains("_compacted.rkyv");
+                                                                state.register_file(&filename, src_batch, tgt_batch, count, is_compacted, None, None);
+                                                                seen_files.insert(filename);
+                                                                lines_processed += 1;
+                                                                files_added += 1;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        processed_batches.insert(*batch);
+                    }
+                }
+                
+                test_print(&format!("   ... Added {} new files from intermediate counts", files_added));
+            }
+            
+            // Step 3: If --force, scan rkyv files directly to fill remaining gaps
+            if config.force_recount {
+                test_print("   ... FORCE mode: Scanning .rkyv files to fill gaps...");
+                
+                let mut rkyv_files: Vec<std::path::PathBuf> = Vec::new();
+                for entry in fs::read_dir(input_base).map_err(|e| format!("Error reading directory: {}", e))? {
+                    if let Ok(e) = entry {
+                        if let Some(name) = e.file_name().to_str() {
+                            if name.ends_with(".rkyv") && name.contains(&format!("_to_{:02}_", size)) {
+                                rkyv_files.push(e.path());
+                            }
+                        }
+                    }
+                }
+                
+                test_print(&format!("   ... Found {} total rkyv files in directory", rkyv_files.len()));
+                
+                // Filter to only files not already in state
+                let missing_files: Vec<_> = rkyv_files.iter()
+                    .filter(|p| {
+                        p.file_name()
+                            .and_then(|n| n.to_str())
+                            .map(|name| !seen_files.contains(name))
+                            .unwrap_or(false)
+                    })
+                    .collect();
+                
+                test_print(&format!("   ... {} files missing from state, need introspection", missing_files.len()));
+                
+                if missing_files.is_empty() {
+                    test_print("   ... All rkyv files already in state, nothing to introspect");
                 } else {
-                    test_print("Global count not found; reading intermediary files or scanning rkyv files...");
+                    let total_missing = missing_files.len();
+                    let mut processed = 0;
+                    for path in missing_files {
+                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                            processed += 1;
+                            test_print(&format!("   ... [{}/{}] Reading {}", processed, total_missing, name));
+                            
+                            // Parse batch numbers
+                            if let Some(to_pos) = name.find("_to_") {
+                                let before_to = &name[..to_pos];
+                                let after_raw = &name[to_pos + 4..];
+                                let after_to = after_raw
+                                    .strip_suffix("_compacted.rkyv")
+                                    .or_else(|| after_raw.strip_suffix(".rkyv"))
+                                    .unwrap_or(after_raw);
+                                
+                                if let Some(src_pos) = before_to.rfind("_batch_") {
+                                    if let Ok(src_batch) = before_to[src_pos + 7..].parse::<u32>() {
+                                        if let Some(tgt_pos) = after_to.rfind("_batch_") {
+                                            if let Ok(tgt_batch) = after_to[tgt_pos + 7..].parse::<u32>() {
+                                                // Count lists in rkyv file
+                                                use memmap2::Mmap;
+                                                use rkyv::check_archived_root;
+                                                use crate::no_set_list::NoSetListSerialized;
+                                                
+                                                if let Ok(file) = fs::File::open(&path) {
+                                                    if let Ok(mmap) = unsafe { Mmap::map(&file) } {
+                                                        if let Ok(arch) = check_archived_root::<Vec<NoSetListSerialized>>(&mmap[..]) {
+                                                            let count = arch.len() as u64;
+                                                            let is_compacted = name.contains("_compacted.rkyv");
+                                                            
+                                                            // Get file metadata
+                                                            let (file_size, mtime) = path.metadata()
+                                                                .ok()
+                                                                .map(|m| (
+                                                                    Some(m.len()),
+                                                                    m.modified().ok()
+                                                                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                                                                        .map(|d| d.as_secs() as i64)
+                                                                ))
+                                                                .unwrap_or((None, None));
+                                                            
+                                                            state.register_file(name, src_batch, tgt_batch, count, is_compacted, file_size, mtime);
+                                                            seen_files.insert(name.to_string());
+                                                            added_from_rkyv += 1;
+                                                            
+                                                            test_print(&format!("       {} lists counted, saving state...", count));
+                                                            state.flush().map_err(|e| format!("Error saving rkyv after {}: {}", name, e))?;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-                GlobalFileInfo::from_intermediary_files(input_base, *size, config.force_recount)
-            };
-
-            let mut gfi = gfi_res.map_err(|e| format!("Error loading counts: {}", e))?;
-            let json_path = Path::new(input_base).join(format!("nsl_{:02}_global_info.json", size));
-            let txt_path = Path::new(input_base).join(format!("nsl_{:02}_global_info.txt", size));
-
-            gfi.save_json(&json_path).map_err(|e| format!("Error writing {}: {}", json_path.display(), e))?;
-            let txt_body = gfi.to_txt(input_base, *size);
-            fs::write(&txt_path, txt_body).map_err(|e| format!("Error writing {}: {}", txt_path.display(), e))?;
-
-            test_print(&format!("Wrote {} and {}", json_path.display(), txt_path.display()));
-            Ok("Legacy global info written".to_string())
+                
+                if added_from_rkyv > 0 {
+                    test_print(&format!("   ... Added {} files from direct rkyv scan", added_from_rkyv));
+                }
+            }
+            
+            // Only save if we actually added new data
+            let total_files_added = files_added + added_from_rkyv;
+            
+            if total_files_added > 0 {
+                test_print("   ... Saving updated state...");
+                state.flush().map_err(|e| format!("Error saving rkyv: {}", e))?;
+                state.export_human_readable().map_err(|e| format!("Error exporting JSON/TXT: {}", e))?;
+                
+                let rkyv_path = Path::new(input_base).join(format!("nsl_{:02}_global_info.rkyv", size));
+                let json_path = Path::new(input_base).join(format!("nsl_{:02}_global_info.json", size));
+                let txt_path = Path::new(input_base).join(format!("nsl_{:02}_global_info.txt", size));
+                
+                test_print(&format!("Wrote {}, {} and {}", rkyv_path.display(), json_path.display(), txt_path.display()));
+            } else {
+                test_print("   ... No changes detected, skipping file writes");
+            }
+            
+            test_print(&format!("Total: {} files from {} unique source batches", 
+                state.entries().len(), 
+                state.entries().values().map(|e| e.source_batch).collect::<HashSet<_>>().len()));
+            Ok("Legacy count completed successfully".to_string())
+        },
+        
+        ProcessingMode::CreateJson { size } => {
+            use crate::file_info::GlobalFileState;
+            
+            test_print(&format!("Creating human-readable JSON/TXT exports for size {:02}...", size));
+            
+            // Load state from rkyv (authoritative format)
+            let state = GlobalFileState::from_sources(&config.input_dir, *size)
+                .map_err(|e| format!("Error loading state: {}", e))?;
+            
+            test_print(&format!("   ... Loaded {} files from rkyv state", state.entries().len()));
+            
+            // Export to human-readable formats
+            state.export_human_readable()
+                .map_err(|e| format!("Error exporting JSON/TXT: {}", e))?;
+            
+            let json_path = Path::new(&config.input_dir).join(format!("nsl_{:02}_global_info.json", size));
+            let txt_path = Path::new(&config.input_dir).join(format!("nsl_{:02}_global_info.txt", size));
+            
+            test_print(&format!("Exported {} and {}", json_path.display(), txt_path.display()));
+            Ok("JSON/TXT export completed successfully".to_string())
         },
         
         ProcessingMode::Check { size } => {

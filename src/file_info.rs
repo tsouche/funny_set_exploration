@@ -6,13 +6,15 @@ use std::path::{Path, PathBuf};
 
 use memmap2::Mmap;
 use rkyv::check_archived_root;
+use rkyv::{Archive, Serialize as RkyvSerialize, Deserialize as RkyvDeserialize};
 use serde::{Deserialize, Serialize};
 
 use crate::no_set_list::NoSetListSerialized;
 use crate::utils::debug_print;
 
 /// Represents a single entry from the global count file plus on-disk metadata.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Archive, RkyvSerialize, RkyvDeserialize)]
+#[archive(check_bytes)]
 pub struct FileInfo {
     pub source_batch: u32,
     pub target_batch: u32,
@@ -74,7 +76,8 @@ impl FileInfo {
 }
 
 /// Aggregated file info list with helpers for JSON persistence and status checks.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq, Archive, RkyvSerialize, RkyvDeserialize)]
+#[archive(check_bytes)]
 pub struct GlobalFileInfo {
     pub entries: Vec<FileInfo>,
 }
@@ -85,6 +88,7 @@ impl GlobalFileInfo {
     }
 
     pub fn save_json<P: AsRef<Path>>(&self, path: P) -> std::io::Result<()> {
+        Self::backup_if_exists(path.as_ref(), "json")?;
         let file = fs::File::create(path)?;
         serde_json::to_writer_pretty(file, self)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
@@ -94,6 +98,41 @@ impl GlobalFileInfo {
         let file = fs::File::open(path)?;
         serde_json::from_reader(file)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+    }
+
+    /// Save to rkyv binary format (much faster than JSON)
+    pub fn save_rkyv<P: AsRef<Path>>(&self, path: P) -> std::io::Result<()> {
+        use std::io::Write;
+        Self::backup_if_exists(path.as_ref(), "rkyv")?;
+        let bytes = rkyv::to_bytes::<_, 256>(self)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let mut file = fs::File::create(path)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        Ok(())
+    }
+
+    /// Load from rkyv binary format
+    pub fn load_rkyv<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
+        let file = fs::File::open(path)?;
+        let mmap = unsafe { Mmap::map(&file)? };
+        let archived = check_archived_root::<Self>(&mmap[..])
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("rkyv validation error: {:?}", e)))?;
+        let deserialized: Self = archived.deserialize(&mut rkyv::Infallible)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("rkyv deserialization error: {:?}", e)))?;
+        Ok(deserialized)
+    }
+
+    /// Backup existing file by renaming to _old before saving new version
+    fn backup_if_exists(path: &Path, extension: &str) -> std::io::Result<()> {
+        if path.exists() {
+            let old_path = path.with_extension(format!("{}_old", extension));
+            if old_path.exists() {
+                let _ = fs::remove_file(&old_path); // Remove previous backup
+            }
+            fs::rename(path, &old_path)?;
+        }
+        Ok(())
     }
 
     /// Load from a global count text file.
@@ -116,26 +155,58 @@ impl GlobalFileInfo {
         let pattern_new = format!("nsl_{:02}_intermediate_count_from_{:02}_", target_size, target_size - 1);
         let legacy_pattern = format!("no_set_list_input_intermediate_count_{:02}_", target_size - 1);
         
-        // Step 1: Try to load existing JSON file (unless force mode)
+        // Step 1: Try to load existing file (unless force mode)
+        // Try rkyv first (faster), fall back to JSON
         let json_path = Path::new(base_path).join(format!("nsl_{:02}_global_info.json", target_size));
-        if !force && json_path.exists() {
-            test_print(&format!("   ... Loading existing JSON file: {}", json_path.display()));
-            match Self::load_json(&json_path) {
-                Ok(existing_gfi) => {
-                    // Extract existing data
-                    for entry in existing_gfi.entries {
-                        let key = (entry.source_batch, entry.target_batch);
-                        all_file_info.insert(key, (entry.filename.clone(), entry.nb_lists_in_file, entry.compacted));
-                        seen_files.insert(entry.filename.clone());
-                        processed_source_batches.insert(entry.source_batch);
+        let rkyv_path_load = Path::new(base_path).join(format!("nsl_{:02}_global_info.rkyv", target_size));
+        
+        if !force {
+            let mut loaded = false;
+            
+            // Try rkyv binary format first (much faster)
+            if rkyv_path_load.exists() {
+                test_print(&format!("   ... Loading existing rkyv file: {}", rkyv_path_load.display()));
+                match Self::load_rkyv(&rkyv_path_load) {
+                    Ok(existing_gfi) => {
+                        // Extract existing data
+                        for entry in existing_gfi.entries {
+                            let key = (entry.source_batch, entry.target_batch);
+                            all_file_info.insert(key, (entry.filename.clone(), entry.nb_lists_in_file, entry.compacted));
+                            seen_files.insert(entry.filename.clone());
+                            processed_source_batches.insert(entry.source_batch);
+                        }
+                        let unique_batches: HashSet<u32> = all_file_info.keys().map(|(src, _)| *src).collect();
+                        test_print(&format!("   ... Loaded {} output files from {} input batches", 
+                            all_file_info.len().separated_string(), unique_batches.len()));
+                        loaded = true;
                     }
-                    let unique_batches: HashSet<u32> = all_file_info.keys().map(|(src, _)| *src).collect();
-                    test_print(&format!("   ... Loaded {} output files from {} input batches", 
-                        all_file_info.len().separated_string(), unique_batches.len()));
+                    Err(e) => {
+                        test_print(&format!("   ... Warning: Could not load rkyv file: {}", e));
+                        test_print("   ... Trying JSON fallback...");
+                    }
                 }
-                Err(e) => {
-                    test_print(&format!("   ... Warning: Could not load existing JSON: {}", e));
-                    test_print("   ... Will rebuild from scratch");
+            }
+            
+            // Fall back to JSON if rkyv failed or doesn't exist
+            if !loaded && json_path.exists() {
+                test_print(&format!("   ... Loading existing JSON file: {}", json_path.display()));
+                match Self::load_json(&json_path) {
+                    Ok(existing_gfi) => {
+                        // Extract existing data
+                        for entry in existing_gfi.entries {
+                            let key = (entry.source_batch, entry.target_batch);
+                            all_file_info.insert(key, (entry.filename.clone(), entry.nb_lists_in_file, entry.compacted));
+                            seen_files.insert(entry.filename.clone());
+                            processed_source_batches.insert(entry.source_batch);
+                        }
+                        let unique_batches: HashSet<u32> = all_file_info.keys().map(|(src, _)| *src).collect();
+                        test_print(&format!("   ... Loaded {} output files from {} input batches", 
+                            all_file_info.len().separated_string(), unique_batches.len()));
+                    }
+                    Err(e) => {
+                        test_print(&format!("   ... Warning: Could not load existing JSON: {}", e));
+                        test_print("   ... Will rebuild from scratch");
+                    }
                 }
             }
         }
@@ -235,7 +306,8 @@ impl GlobalFileInfo {
             already_processed, total_files));
         test_print(&format!("   ... Reading {} new intermediary files and updating registry...", total_files));
         
-        let save_interval = 20; // Save every 20 files
+        let save_interval = 100; // Save every 100 files
+        let rkyv_path = Path::new(base_path).join(format!("nsl_{:02}_global_info.rkyv", target_size));
         
         for (idx, (path, source_batch)) in files_to_process.iter().enumerate() {
             let file_num = idx + 1;
@@ -272,10 +344,11 @@ impl GlobalFileInfo {
                 
                 // Save progress every save_interval files
                 if file_num % save_interval == 0 || file_num == total_files {
+                    let save_start = std::time::Instant::now();
                     test_print(&format!("   ... Saving intermediate progress ({} files processed, {} unique output files)...", 
                         file_num, all_file_info.len().separated_string()));
                     
-                    // Build current entries and save to JSON
+                    // Build current entries and save to rkyv binary format (much faster than JSON)
                     let mut entries: Vec<FileInfo> = all_file_info
                         .iter()
                         .map(|((src, tgt), (fname, count, compacted))| FileInfo {
@@ -303,8 +376,12 @@ impl GlobalFileInfo {
                     }
                     
                     let temp_gfi = GlobalFileInfo { entries };
-                    if let Err(e) = temp_gfi.save_json(&json_path) {
+                    // Use rkyv binary format for intermediate saves (10-100x faster than JSON)
+                    if let Err(e) = temp_gfi.save_rkyv(&rkyv_path) {
                         test_print(&format!("   ... Warning: Could not save intermediate progress: {}", e));
+                    } else {
+                        let elapsed = save_start.elapsed().as_secs_f64();
+                        test_print(&format!("             ... Saved in {:.2}s", elapsed));
                     }
                 }
             }
@@ -378,13 +455,27 @@ impl GlobalFileState {
     fn key(src: u32, tgt: u32, filename: &str) -> (u32, u32, String) {
         (src, tgt, filename.to_string())
     }
+    
+    pub fn new(base_dir: &str, target_size: u8) -> Self {
+        Self { target_size, base_dir: base_dir.to_string(), entries: BTreeMap::new() }
+    }
 
     pub fn from_sources(base_dir: &str, target_size: u8) -> std::io::Result<Self> {
+        // Priority 1: rkyv (authoritative format)
+        let rkyv_path = Path::new(base_dir).join(format!("nsl_{:02}_global_info.rkyv", target_size));
+        if rkyv_path.exists() {
+            let gfi = GlobalFileInfo::load_rkyv(&rkyv_path)?;
+            return Ok(Self::from_vec(base_dir, target_size, gfi.entries));
+        }
+        
+        // Priority 2: JSON (legacy format, migration path)
         let json_path = Path::new(base_dir).join(format!("nsl_{:02}_global_info.json", target_size));
         if json_path.exists() {
             let gfi = GlobalFileInfo::load_json(&json_path)?;
             return Ok(Self::from_vec(base_dir, target_size, gfi.entries));
         }
+        
+        // Priority 3: Legacy global_count.txt files
         let primary = Path::new(base_dir).join(format!("nsl_{:02}_global_count.txt", target_size));
         let legacy_space = Path::new(base_dir).join(format!("nsl_{:02}_global count.txt", target_size));
         if primary.exists() {
@@ -394,6 +485,8 @@ impl GlobalFileState {
             let gfi = GlobalFileInfo::from_global_count_file(&legacy_space)?;
             return Ok(Self::from_vec(base_dir, target_size, gfi.entries));
         }
+        
+        // Priority 4: Legacy intermediate count files (slowest)
         let gfi = GlobalFileInfo::from_intermediary_files(base_dir, target_size, false)?;
         Ok(Self::from_vec(base_dir, target_size, gfi.entries))
     }
@@ -465,17 +558,43 @@ impl GlobalFileState {
     pub fn flush(&mut self) -> std::io::Result<()> {
         self.recompute_cumulative();
         let entries_vec = self.to_vec();
+        let gfi = GlobalFileInfo { entries: entries_vec };
+
+        // Save to rkyv as authoritative format
+        let rkyv_path = Path::new(&self.base_dir).join(format!("nsl_{:02}_global_info.rkyv", self.target_size));
+        
+        // Backup existing rkyv file before overwriting
+        if rkyv_path.exists() {
+            let backup_path = rkyv_path.with_extension("rkyv.old");
+            let _ = fs::rename(&rkyv_path, &backup_path);
+        }
+        
+        // Write to temp file, then rename atomically
+        let rkyv_tmp = rkyv_path.with_extension("rkyv.tmp");
+        gfi.save_rkyv(&rkyv_tmp)?;
+        fs::rename(rkyv_tmp, &rkyv_path)?;
+
+        Ok(())
+    }
+    
+    /// Export human-readable JSON and TXT files from the current state
+    /// This is a write-only operation - these files are not read during normal operation
+    pub fn export_human_readable(&self) -> std::io::Result<()> {
+        let entries_vec = self.to_vec();
+        let gfi = GlobalFileInfo { entries: entries_vec.clone() };
 
         let json_path = Path::new(&self.base_dir).join(format!("nsl_{:02}_global_info.json", self.target_size));
         let txt_path = Path::new(&self.base_dir).join(format!("nsl_{:02}_global_info.txt", self.target_size));
 
+        // JSON export
         let json_tmp = json_path.with_extension("json.tmp");
-        let json_text = serde_json::to_string_pretty(&GlobalFileInfo { entries: entries_vec.clone() })
+        let json_text = serde_json::to_string_pretty(&gfi)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         fs::write(&json_tmp, json_text)?;
         if json_path.exists() { let _ = fs::remove_file(&json_path); }
         fs::rename(json_tmp, &json_path)?;
 
+        // TXT export
         let txt_tmp = txt_path.with_extension("txt.tmp");
         let txt_body = render_global_count(&entries_vec, self.target_size, &self.base_dir);
         fs::write(&txt_tmp, txt_body)?;
