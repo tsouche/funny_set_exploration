@@ -755,7 +755,7 @@ fn execute_default_mode(config: &ProcessingConfig) -> Result<String, String> {
     test_print("   - will create   1.180.345.041 no-set-lists with  7 cards");
     test_print("   - will create   7.920.450.378 no-set-lists with  8 cards");
     test_print("   - will create  43.126.538.805 no-set-lists with  9 cards");
-    test_print("   - will create  __.___.___.___ no-set-lists with 10 cards");
+    test_print("   - will create 193.375.848.191 no-set-lists with 10 cards");
     test_print("   - will create  __.___.___.___ no-set-lists with 11 cards");
     test_print("   - will create  __.___.___.___ no-set-lists with 12 cards");
     test_print("   - will create  __.___.___.___ no-set-lists with 13 cards");

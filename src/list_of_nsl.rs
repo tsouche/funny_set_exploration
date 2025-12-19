@@ -844,7 +844,7 @@ pub fn count_size_files(base_path: &str, target_size: u8, force: bool, _keep_sta
     // Helper to display processed batches in compact groups (10 per line)
     
     // Step 4: Save updated state
-    test_print(&format!("\\n   ... Saving state with {} files...", state.entries().len()));
+    test_print(&format!("\n   ... Saving state with {} files...", state.entries().len()));
     state.flush()?;
     
     let elapsed = start_time.elapsed().as_secs_f64();
