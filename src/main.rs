@@ -767,16 +767,19 @@ fn execute_size_mode(config: &ProcessingConfig, output_size: u8, start_batch: Op
     if output_size >= 13 {
         test_print(&format!("\n=== Post-processing: Compacting output files (size {}) ===", output_size));
         match compact_size_files(&config.output_dir, &config.output_dir, output_size, config.max_lists_per_file, None) {
-            Ok(_) => test_print("Output compaction completed successfully.\n"),
+            Ok(_) => {
+                test_print("Output compaction completed successfully.\n");
+                // Note: compact_size_files already exports human-readable files (JSON/TXT)
+            },
             Err(e) => test_print(&format!("Warning: Output compaction encountered an issue: {}\n", e)),
         }
-    }
-    
-    // Step 5: Export human-readable state files (JSON and TXT)
-    test_print(&format!("\nExporting global state files for size {}...", output_size));
-    match global_state.export_human_readable() {
-        Ok(_) => test_print(&format!("Exported: {}/nsl_{:02}_global_info.json and .txt\n", config.output_dir, output_size)),
-        Err(e) => test_print(&format!("Warning: Failed to export JSON/TXT: {}\n", e)),
+    } else {
+        // For sizes < 13, no compaction runs, so we need to export human-readable files here
+        test_print(&format!("\nExporting global state files for size {}...", output_size));
+        match global_state.export_human_readable() {
+            Ok(_) => test_print(&format!("Exported: {}/nsl_{:02}_global_info.json and .txt\n", config.output_dir, output_size)),
+            Err(e) => test_print(&format!("Warning: Failed to export JSON/TXT: {}\n", e)),
+        }
     }
     
     if start_batch.is_some() {

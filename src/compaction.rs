@@ -98,6 +98,8 @@ pub fn compact_size_files(input_dir: &str, output_dir: &str, target_size: u8, ba
     let mut state = GlobalFileState::from_sources(input_dir, target_size)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to load state: {}", e)))?;
 
+    // Run the compaction logic in a closure so we can always export at the end
+    let result = (|| -> std::io::Result<u32> {
     let mut total_compacted_files = 0;
     let mut iteration = 0;
 
@@ -245,7 +247,7 @@ pub fn compact_size_files(input_dir: &str, output_dir: &str, target_size: u8, ba
         // Flush state IMMEDIATELY (crash-safe checkpoint before modifying original files)
         state.flush()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to flush state after compacted file: {}", e)))?;
-        test_print("   Flushed state to JSON/TXT (compacted file recorded)");
+        test_print("   Flushed state to rkyv (compacted file recorded)");
 
         // Now safe to modify original files (if crash happens here, compacted file is already in state)
         for (path, consumed, total, src_batch) in touched_files.iter() {
@@ -277,7 +279,7 @@ pub fn compact_size_files(input_dir: &str, output_dir: &str, target_size: u8, ba
         // Final flush to record all file modifications (deletions/shrinks) for this iteration
         state.flush()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to flush state after file modifications: {}", e)))?;
-        test_print("   Flushed state to JSON/TXT (file modifications recorded)");
+        test_print("   Flushed state to rkyv (file modifications recorded)");
 
         total_compacted_files += 1;
         test_print(&format!("   Compacted file #{} created: {}", total_compacted_files, output_filename));
@@ -291,18 +293,30 @@ pub fn compact_size_files(input_dir: &str, output_dir: &str, target_size: u8, ba
         }
     }
 
-    let elapsed = start_time.elapsed().as_secs_f64();
-    test_print(&format!("\nCompaction completed in {:.2} seconds", elapsed));
-    test_print(&format!("   Total compacted files created: {}", total_compacted_files));
+    Ok(total_compacted_files)
+    })(); // End of compaction closure
 
-    // Export human-readable state files (JSON and TXT)
+    let elapsed = start_time.elapsed().as_secs_f64();
+    
+    // Always export human-readable state files (JSON and TXT) regardless of success/failure
     test_print(&format!("\nExporting global state files for size {:02}...", target_size));
     match state.export_human_readable() {
         Ok(_) => test_print(&format!("Exported: {}/nsl_{:02}_global_info.json and .txt", output_dir, target_size)),
         Err(e) => test_print(&format!("Warning: Failed to export JSON/TXT: {}", e)),
     }
 
-    Ok(())
+    // Now check the result of the compaction
+    match result {
+        Ok(total_compacted_files) => {
+            test_print(&format!("\nCompaction completed in {:.2} seconds", elapsed));
+            test_print(&format!("   Total compacted files created: {}", total_compacted_files));
+            Ok(())
+        },
+        Err(e) => {
+            test_print(&format!("\nCompaction encountered error after {:.2} seconds", elapsed));
+            Err(e)
+        }
+    }
 }
 
 /// Legacy: Compact a single non-compacted input file (no longer used - kept for reference)
