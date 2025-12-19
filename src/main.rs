@@ -772,6 +772,13 @@ fn execute_size_mode(config: &ProcessingConfig, output_size: u8, start_batch: Op
         }
     }
     
+    // Step 5: Export human-readable state files (JSON and TXT)
+    test_print(&format!("\nExporting global state files for size {}...", output_size));
+    match global_state.export_human_readable() {
+        Ok(_) => test_print(&format!("Exported: {}/nsl_{:02}_global_info.json and .txt\n", config.output_dir, output_size)),
+        Err(e) => test_print(&format!("Warning: Failed to export JSON/TXT: {}\n", e)),
+    }
+    
     if start_batch.is_some() {
         Ok(format!("Size {} processing completed (restarted from batch {})", output_size, start_batch.unwrap()))
     } else {
@@ -799,6 +806,13 @@ fn execute_unitary_mode(config: &ProcessingConfig, unitary_size: u8, unitary_bat
     
     test_print(&format!("Processing input size {} batch {}:", unitary_size, unitary_batch));
     no_set_lists.process_single_batch(unitary_size, unitary_batch, &config.max_lists_per_file, Some(&mut global_state));
+    
+    // Export human-readable state files
+    test_print(&format!("\nExporting global state files for size {}...", target_size));
+    match global_state.export_human_readable() {
+        Ok(_) => test_print(&format!("Exported: {}/nsl_{:02}_global_info.json and .txt\n", config.output_dir, target_size)),
+        Err(e) => test_print(&format!("Warning: Failed to export JSON/TXT: {}\n", e)),
+    }
     
     Ok(format!("Unitary processing completed for size {} batch {}", unitary_size, unitary_batch))
 }
@@ -838,6 +852,13 @@ fn execute_default_mode(config: &ProcessingConfig) -> Result<String, String> {
             .map_err(|e| format!("Failed to load global state: {}", e))?;
         test_print(&format!("\nStart processing files to create no-set-lists of size {}:", target_size));
         no_set_lists.process_all_files_of_current_size_n(size, &config.max_lists_per_file, Some(&mut global_state));
+        
+        // Export human-readable state files for this size
+        test_print(&format!("Exporting global state files for size {}...", target_size));
+        match global_state.export_human_readable() {
+            Ok(_) => test_print(&format!("Exported: {}/nsl_{:02}_global_info.json and .txt", config.output_dir, target_size)),
+            Err(e) => test_print(&format!("Warning: Failed to export JSON/TXT: {}", e)),
+        }
     }
     
     Ok("Default pipeline completed (sizes 3-18)".to_string())

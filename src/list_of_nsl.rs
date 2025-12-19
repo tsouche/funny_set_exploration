@@ -892,13 +892,17 @@ pub fn count_size_files(base_path: &str, target_size: u8, force: bool, _keep_sta
 
     // Helper to display processed batches in compact groups (10 per line)
     
-    // Step 4: Save updated state
+    // Step 4: Save updated state (rkyv, JSON, and TXT)
     test_print(&format!("\n   ... Saving state with {} files...", state.entries().len()));
     state.flush()?;
+    
+    // Export human-readable formats
+    state.export_human_readable()?;
     
     let elapsed = start_time.elapsed().as_secs_f64();
     test_print(&format!("\nCount completed in {:.2} seconds", elapsed));
     test_print(&format!("State saved to: {}/nsl_{:02}_global_info.rkyv", base_path, target_size));
+    test_print(&format!("Exported to: {}/nsl_{:02}_global_info.json and .txt", base_path, target_size));
     Ok(())
 }
 

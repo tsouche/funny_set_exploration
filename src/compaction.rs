@@ -295,6 +295,13 @@ pub fn compact_size_files(input_dir: &str, output_dir: &str, target_size: u8, ba
     test_print(&format!("\nCompaction completed in {:.2} seconds", elapsed));
     test_print(&format!("   Total compacted files created: {}", total_compacted_files));
 
+    // Export human-readable state files (JSON and TXT)
+    test_print(&format!("\nExporting global state files for size {:02}...", target_size));
+    match state.export_human_readable() {
+        Ok(_) => test_print(&format!("Exported: {}/nsl_{:02}_global_info.json and .txt", output_dir, target_size)),
+        Err(e) => test_print(&format!("Warning: Failed to export JSON/TXT: {}", e)),
+    }
+
     Ok(())
 }
 
