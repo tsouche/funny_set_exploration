@@ -367,7 +367,6 @@ fn build_config(args: &Args, max_per_file: u64) -> Result<ProcessingConfig, Stri
 /// Execute the appropriate mode based on configuration
 fn execute_mode(config: &ProcessingConfig) -> Result<String, String> {
     use crate::list_of_nsl::{count_size_files, compact_size_files, check_size_files};
-    use crate::file_info::{GlobalFileInfo};
     use std::path::Path;
     use std::fs;
     
@@ -381,7 +380,7 @@ fn execute_mode(config: &ProcessingConfig) -> Result<String, String> {
 
         ProcessingMode::LegacyCount { size } => {
             use crate::file_info::GlobalFileState;
-            use std::collections::{BTreeMap, HashSet};
+            use std::collections::HashSet;
             use std::io::BufRead;
             
             let input_base = &config.input_dir;
@@ -438,7 +437,6 @@ fn execute_mode(config: &ProcessingConfig) -> Result<String, String> {
                         let file = fs::File::open(path).map_err(|e| format!("Error opening {}: {}", name, e))?;
                         let reader = std::io::BufReader::new(file);
                         
-                        let mut lines_processed = 0;
                         for line in reader.lines() {
                             let line = line.map_err(|e| format!("Error reading line: {}", e))?;
                             // Strip UTF-8 BOM if present
@@ -474,7 +472,7 @@ fn execute_mode(config: &ProcessingConfig) -> Result<String, String> {
                                                                 let is_compacted = filename.contains("_compacted.rkyv");
                                                                 state.register_file(&filename, src_batch, tgt_batch, count, is_compacted, None, None);
                                                                 seen_files.insert(filename);
-                                                                lines_processed += 1;
+
                                                                 files_added += 1;
                                                             }
                                                         }

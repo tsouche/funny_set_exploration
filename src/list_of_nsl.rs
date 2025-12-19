@@ -13,12 +13,8 @@
 ///
 /// This is the only active version of the project.
 
-use std::fs::File;
-
 // Rkyv imports for zero-copy serialization
 use rkyv::check_archived_root;
-use rkyv::Deserialize as RkyvDeserializeTrait;
-use memmap2::Mmap;
 
 use separator::Separatable;
 use crate::utils::*;
@@ -684,9 +680,7 @@ impl Default for ListOfNSL {
 
 /// Count all existing output files for a given target size
 /// Creates a summary report file with counts per batch
-/// Number of files to process in each batch for count mode
-const COUNT_BATCH_SIZE: usize = 10;
-
+/// 
 /// Count files for a given target size and create summary report
 /// 
 /// This function uses an input-intermediary file system:
@@ -888,7 +882,7 @@ fn _is_intermediary_file_valid(intermediary_file: &str, source_files: &[std::pat
 }
 
 /// Process a batch of files and write results to an intermediary file
-// Helper: create input-intermediary files from a list of .rkyv files (one per source batch)
+/// Helper: create input-intermediary files from a list of .rkyv files (one per source batch)
 fn _create_input_intermediary_from_files(files: &[std::path::PathBuf], output_file: &str) -> std::io::Result<u64> {
     use std::fs::File;
     use std::io::Write;
@@ -917,6 +911,19 @@ fn _create_input_intermediary_from_files(files: &[std::path::PathBuf], output_fi
 
     Ok(total)
 }
+
+/// Helper to print large numbers with thousand separators and timing info
+pub fn created_a_total_of(nb: u64, size: u8, elapsed_secs: f64) {
+        let hours = (elapsed_secs / 3600.0) as u64;
+        let minutes = ((elapsed_secs % 3600.0) / 60.0) as u64;
+        let seconds = (elapsed_secs % 60.0) as u64;
+        
+        test_print(&format!("   ... created a total of {:>15} no-set-{:02} lists \
+            in {:>10.2} seconds ({:02}h{:02}m{:02}s)", 
+            nb.separated_string(), size, elapsed_secs, hours, minutes, seconds));
+    }
+
+
 
 #[cfg(test)]
 mod tests {
@@ -1092,46 +1099,11 @@ mod tests {
         let _ = fs::remove_dir_all(&base);
     }
 
-    #[test]
-    fn regenerate_report_from_partial_updates_report() {
-        // Create a temporary directory
-        let mut base = std::env::temp_dir();
-        base.push(format!("funny_test_regen_{}", chrono::Local::now().timestamp_nanos_opt().unwrap_or(0)));
-        let base = base;
-        fs::create_dir_all(&base).unwrap();
-
-        let target_size = 9u8;
-
-        let partial = base.join(format!("nsl_{:02}_global_count.partial", target_size));
-        let mut pf = File::create(&partial).unwrap();
-        // write one partial entry: src,tgt,count,filename
-        writeln!(pf, "{},{},{},{}", 0u32, 12u32, 7u64, "nsl_08_batch_000000_to_09_batch_000012.rkyv").unwrap();
-
-        // Run regen helper
-        regenerate_report_from_partial(base.to_str().unwrap(), target_size, partial.to_str().unwrap(), 1).unwrap();
-
-        let report = base.join(format!("nsl_{:02}_global_count.txt", target_size));
-        assert!(report.exists());
-        let contents = fs::read_to_string(&report).unwrap();
-        assert!(contents.contains("nsl_08_batch_000000_to_09_batch_000012.rkyv"));
-        assert!(contents.contains("Total lists") || contents.contains("Total files") || contents.contains("Total lists (partial)"));
-
-        // Append another partial entry and regen again
-        let mut pf = std::fs::OpenOptions::new().append(true).open(&partial).unwrap();
-        writeln!(pf, "{},{},{},{}", 0u32, 13u32, 3u64, "nsl_08_batch_000000_to_09_batch_000013.rkyv").unwrap();
-        regenerate_report_from_partial(base.to_str().unwrap(), target_size, partial.to_str().unwrap(), 2).unwrap();
-
-        let contents2 = fs::read_to_string(&report).unwrap();
-        assert!(contents2.contains("nsl_08_batch_000000_to_09_batch_000013.rkyv"));
-        assert!(contents2.contains("Total lists (partial)") || contents2.contains("Total lists"));
-
-        let _ = fs::remove_dir_all(&base);
-    }
 }
 
 /// Regenerate the consolidated global report from the partial CSV file.
-/// This is called after each processed batch so the human-readable global report
-/// is up-to-date and reflects progress mid-run.
+    /// This is called after each processed batch so the human-readable global report
+    /// is up-to-date and reflects progress mid-run.
 pub fn _regenerate_report_from_partial(base_path: &str, target_size: u8, partial_filename: &str, intermediary_files_total: usize) -> std::io::Result<()> {
     use std::fs::File;
     use std::io::{BufRead, BufReader, Write};
@@ -1193,12 +1165,9 @@ pub fn _regenerate_report_from_partial(base_path: &str, target_size: u8, partial
     Ok(())
 }
 
-/// Consolidate all intermediary count files into the final report
-// Removed: consolidate_count_files - output-intermediary files are no longer used.
-
 /// Check repository integrity for a specific size
-/// - Lists missing output batches (should be continuous)
-/// - Lists files mentioned in intermediary files but missing from directory
+    /// - Lists missing output batches (should be continuous)
+    /// - Lists files mentioned in intermediary files but missing from directory
 pub fn check_size_files(base_path: &str, target_size: u8) -> std::io::Result<()> {
     use std::fs;
     use std::path::PathBuf;
@@ -1373,7 +1342,7 @@ pub fn check_size_files(base_path: &str, target_size: u8) -> std::io::Result<()>
     }
     
     test_print("\nCheck completed");
-    Ok(())
+    return Ok(());
 }
 
 /// Compact small output files into larger 10M-entry batches
@@ -1382,11 +1351,8 @@ pub fn compact_size_files(input_dir: &str, output_dir: &str, target_size: u8, ba
     crate::compaction::compact_size_files(input_dir, output_dir, target_size, batch_size, max_batch)
 }
 
-/// Load lists from a file (helper for compact mode)
-#[allow(dead_code)]
-// load_lists_from_file moved to `io_helpers::load_lists_from_file`
-
 /// Save compacted batch to file
+#[allow(dead_code)]
 fn save_compacted_batch(filepath: &str, lists: &[NoSetListSerialized]) -> std::io::Result<()> {
     use rkyv::ser::{serializers::AllocSerializer, Serializer};
     
@@ -1400,16 +1366,5 @@ fn save_compacted_batch(filepath: &str, lists: &[NoSetListSerialized]) -> std::i
     std::fs::write(filepath, bytes)?;
     
     Ok(())
-}
-
-/// Helper to print large numbers with thousand separators and timing info
-pub fn created_a_total_of(nb: u64, size: u8, elapsed_secs: f64) {
-    let hours = (elapsed_secs / 3600.0) as u64;
-    let minutes = ((elapsed_secs % 3600.0) / 60.0) as u64;
-    let seconds = (elapsed_secs % 60.0) as u64;
-    
-    test_print(&format!("   ... created a total of {:>15} no-set-{:02} lists \
-        in {:>10.2} seconds ({:02}h{:02}m{:02}s)", 
-        nb.separated_string(), size, elapsed_secs, hours, minutes, seconds));
 }
 

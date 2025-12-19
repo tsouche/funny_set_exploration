@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{self, Write};
+use std::io;
 use memmap2::Mmap;
 use rkyv::check_archived_root;
 use rkyv::Deserialize;
@@ -83,19 +83,6 @@ pub fn load_lists_from_file(filepath: &str) -> io::Result<Vec<NoSetListSerialize
         }
         Err(e) => Err(io::Error::new(io::ErrorKind::InvalidData, format!("Archive validation failed: {:?}", e))),
     }
-}
-
-/// Atomically write text to `path` by writing a temp file, fsyncing, then renaming into place.
-pub fn write_text_atomic(path: &std::path::Path, text: &str) -> io::Result<()> {
-    let tmp = path.with_extension("tmp");
-    let mut f = File::create(&tmp)?;
-    f.write_all(text.as_bytes())?;
-    f.sync_all()?;
-    if path.exists() {
-        let _ = std::fs::remove_file(path);
-    }
-    std::fs::rename(&tmp, path)?;
-    Ok(())
 }
 
 // Minimal debug_print to mirror crate function expectations when used from this module

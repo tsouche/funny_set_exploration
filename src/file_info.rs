@@ -743,19 +743,6 @@ pub fn render_global_count(entries: &[FileInfo], target_size: u8, base_path: &st
     lines.join("\n")
 }
 
-/// Convenience helper to read, parse, mutate, and overwrite a global count file in-place.
-pub fn load_global_count_file(path: &Path) -> std::io::Result<Vec<FileInfo>> {
-    let text = fs::read_to_string(path)?;
-    Ok(parse_global_count_text(&text))
-}
-
-pub fn write_global_count_file(path: &Path, target_size: u8, base_path: &str, entries: &[FileInfo]) -> std::io::Result<()> {
-    let body = render_global_count(entries, target_size, base_path);
-    let tmp = path.with_extension("tmp");
-    fs::write(&tmp, body)?;
-    fs::rename(tmp, path)
-}
-
 /// Build FileInfo rows directly from disk (.rkyv files) without intermediaries.
 pub fn scan_rkyv_files(base_path: &str, target_size: u8) -> std::io::Result<Vec<FileInfo>> {
     let mut entries: Vec<FileInfo> = Vec::new();

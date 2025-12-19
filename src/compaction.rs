@@ -142,7 +142,7 @@ pub fn compact_size_files(input_dir: &str, output_dir: &str, target_size: u8, ba
     for (fname, _count, src_batch, _tgt_batch) in plan.iter() {
         if buffer.len() as u64 >= batch_size { break; }
         let path = format!("{}/{}", input_dir, fname);
-        let mut all_lists = crate::io_helpers::load_lists_from_file(&path)?;
+        let all_lists = crate::io_helpers::load_lists_from_file(&path)?;
         let total = all_lists.len();
         let mut consumed = 0usize;
 
@@ -289,7 +289,6 @@ pub fn compact_size_files(input_dir: &str, output_dir: &str, target_size: u8, ba
 /// Note: Main compaction now uses GlobalFileState approach in compact_size_files
 #[allow(dead_code)]
 pub fn compact_one_file_inplace(dir: &str, target_size: u8, batch_size: u64) -> std::io::Result<()> {
-    use std::io::Write;
     test_print(&format!("\nSingle-file compaction for size {:02} (batch_size={})", target_size, batch_size.separated_string()));
 
     // Find non-compacted input files and sort ascending by target_batch then source_batch
