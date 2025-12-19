@@ -1,8 +1,10 @@
 # Technical Documentation
 
-## Architecture Overview
+## Architecture Overview (v0.4.12)
 
 This document provides technical details about the implementation of the funny_set_exploration algorithm.
+
+**Current Version:** 0.4.12 - Hybrid stack/heap implementation with auto-compaction workflow for sizes 13+
 
 ## Core Algorithm
 
@@ -43,6 +45,7 @@ pub struct NList {
 ```
 
 **Fields explained:**
+
 - `n`: Size of the current combination (3 to 18)
 - `max_card`: Used for filtering - only consider cards > max_card
 - `no_set_list`: The actual card indices (0-80) forming a valid no-set
@@ -66,6 +69,7 @@ pub struct ListOfNlist {
 ```
 
 **Processing flow:**
+
 1. Load batch of n-lists into `current`
 2. Generate n+1-lists, accumulate in `new`
 3. When `new` reaches `MAX_NLISTS_PER_FILE`, save to disk and clear
@@ -91,6 +95,7 @@ fn read_from_file(filename: &str) -> Option<Vec<NList>> {
 ```
 
 **Trade-offs:**
+
 - ✅ Simple API
 - ✅ Good compression
 - ✅ Cross-platform
@@ -102,6 +107,7 @@ fn read_from_file(filename: &str) -> Option<Vec<NList>> {
 Pattern: `nlist_{size:02}_batch_{number:06}.bin`
 
 Examples:
+
 - `nlist_03_batch_000000.bin` - First batch of 3-card lists  
 - `nlist_07_batch_000042.bin` - 43rd batch of 7-card lists
 
@@ -124,11 +130,13 @@ The `filename()` function constructs full paths using `std::path::Path::join()`.
 ### Batch Processing Strategy
 
 **Problem**: Full dataset doesn't fit in RAM
+
 - 6-card lists: ~156M combinations
 - 7-card lists: Estimated billions
 - Cannot hold all in memory simultaneously
 
 **Solution**: Batching
+
 - Process input in batches of `MAX_NLISTS_PER_FILE` (default: 20M)
 - Generate n+1-lists incrementally
 - Save output batches as `new` vector fills up
@@ -137,6 +145,7 @@ The `filename()` function constructs full paths using `std::path::Path::join()`.
 ### Memory Profile
 
 **During processing:**
+
 ```
 Current n-lists in RAM:   ~0-20M lists
 New n+1-lists in RAM:     ~0-20M lists  
@@ -144,6 +153,7 @@ Peak usage:               ~13.5GB (when saving batch)
 ```
 
 **After save:**
+
 ```
 Current n-lists:          ~0-20M lists
 New n+1-lists:            0 (cleared)
@@ -153,6 +163,7 @@ Baseline usage:           ~5GB
 ### Optimization Opportunity
 
 Switching to **rkyv** could reduce peak memory:
+
 - Zero-copy deserialization
 - Memory-map files instead of loading
 - Estimated peak: ~4-5GB (vs current 13.5GB)
@@ -162,11 +173,13 @@ Switching to **rkyv** could reduce peak memory:
 ### Space Complexity
 
 **Per n-list:**
+
 - Fixed fields: ~24 bytes
 - `no_set_list`: n × 8 bytes
 - `remaining_cards_list`: variable, typically (81 - max_card) × 8 bytes
 
 **Total space for batch:**
+
 - 20M n-lists × ~200 bytes ≈ 4GB
 
 ### Time Complexity
@@ -174,6 +187,7 @@ Switching to **rkyv** could reduce peak memory:
 **For generating n+1-lists from n-lists:**
 
 For each n-list:
+
 - Iterate through remaining cards: O(remaining_count)
 - For each candidate card:
   - Check against existing n cards: O(n)
@@ -182,6 +196,7 @@ For each n-list:
 Total: O(num_nlists × remaining × n)
 
 **Observed growth:**
+
 - 3-cards: 58,896 (instant)
 - 4-cards: 1,098,240 (seconds)
 - 5-cards: 13,394,538 (minutes)
@@ -215,6 +230,7 @@ pub fn is_set(i0: usize, i1: usize, i2: usize) -> bool {
 ```
 
 **Card encoding**: Each card 0-80 encodes 4 attributes (2 bits each):
+
 - Bits 0-1: Attribute 1 (0-2)
 - Bits 2-3: Attribute 2 (0-2)
 - Bits 4-5: Attribute 3 (0-2)
@@ -295,6 +311,7 @@ This is much faster than checking all possible third cards.
 ### Current Testing
 
 Minimal automated testing - mostly validation through:
+
 - Known counts for small n (3-6 cards)
 - Invariant checks (no sets in output)
 - File I/O round-trip tests
@@ -321,6 +338,7 @@ Minimal automated testing - mostly validation through:
 ### Debug Printing
 
 Controlled via utils.rs:
+
 ```rust
 debug_print_on();   // Enable debug output
 debug_print_off();  // Disable debug output
@@ -330,11 +348,13 @@ test_print_on();    // Enable test/progress output
 ### Progress Tracking
 
 Built into processing loop:
+
 - Current file being processed
 - New batches saved
 - Total counts with thousand separators
 
 Example output:
+
 ```
 Start processing files for size 7:
    ... saved 20,000,001 n-lists to nlist_07_batch_000000.bin
@@ -355,11 +375,13 @@ separator = "0.4"
 ### Compilation
 
 **Debug build** (with symbols, slower):
+
 ```bash
 cargo build
 ```
 
 **Release build** (optimized, ~10x faster):
+
 ```bash
 cargo build --release
 ```
@@ -372,7 +394,7 @@ Using 2024 edition for latest language features.
 
 ## Known Issues
 
-1. **Windows linker requirement**: 
+1. **Windows linker requirement**:
    - MSVC linker needed OR use GNU toolchain
    - Run `rustup default stable-gnu` if MSVC not available
 
@@ -387,6 +409,7 @@ Using 2024 edition for latest language features.
 ## Future Technical Improvements
 
 See CHANGELOG.md "Future Considerations" section for planned enhancements including:
+
 - rkyv migration for zero-copy deserialization
 - Parallel processing support
 - Checkpoint/resume capability

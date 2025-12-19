@@ -1,14 +1,19 @@
 /// Manage the search for the grail of Set: combinations of 12 / 15 / 18 cards 
 /// with no sets
 ///
-/// Version 0.4.11 - Enhanced compaction with max batch limit
-/// Fixed: find_input_filename bug (removed incorrect size-1 adjustment)
-/// Added: Optional max_batch parameter to --compact for controlled compaction
+/// Version 0.4.12 - Enhanced --size mode with compaction workflow for sizes 13+
+/// Fixed: --size mode now recognizes compacted input files (*_compacted.rkyv)
+/// Added: Automatic input compaction before processing (sizes 13+)
+/// Added: Automatic output compaction after processing (sizes 13+)
+/// Added: --force flag to process all files, not just compacted ones (sizes 13+)
+/// Added: process_batch_range method to handle limited batch ranges
 /// 
 /// CLI Usage:
 ///   funny.exe --size 3 -o .\output                          # Create seed lists (size 3)
 ///   funny.exe --size 5 -i .\input -o .\output               # Build size 5 from size 4
 ///   funny.exe --size 5 2 -i .\input -o .\output             # Restart size 5 from input batch 2
+///   funny.exe --size 14 -i .\input -o .\output              # Build size 14 (auto-compact input & output)
+///   funny.exe --size 14 -i .\input -o .\output --force      # Build size 14 (process all files, not just compacted)
 ///   funny.exe --unitary 5 2 -i .\input -o .\output          # Process only input batch 2
 ///   funny.exe --count 6 -i .\output                         # Count size 6 files
 ///   funny.exe --check 6 -o .\output                         # Check size 6 integrity
@@ -666,6 +671,8 @@ fn execute_mode(config: &ProcessingConfig) -> Result<String, String> {
 fn execute_size_mode(config: &ProcessingConfig, output_size: u8, start_batch: Option<u32>) -> Result<String, String> {
     use crate::list_of_nsl::ListOfNSL;
     use crate::file_info::GlobalFileState;
+    use crate::filenames::get_last_compacted_batch;
+    use crate::compaction::compact_size_files;
     
     if let Some(batch) = start_batch {
         test_print(&format!("RESTART MODE: Resuming output size {} from input batch {}", output_size, batch));
@@ -696,20 +703,74 @@ fn execute_size_mode(config: &ProcessingConfig, output_size: u8, start_batch: Op
         test_print("Seed lists created successfully.\n");
     }
 
-    // Process the requested size
+    // Step 1: For sizes 13+, run compaction on input directory before processing
     let source_size = output_size - 1;
+    if source_size >= 13 {
+        test_print(&format!("\n=== Pre-processing: Compacting input files (size {}) ===", source_size));
+        match compact_size_files(&config.input_dir, &config.input_dir, source_size, config.max_lists_per_file, None) {
+            Ok(_) => test_print("Input compaction completed successfully.\n"),
+            Err(e) => test_print(&format!("Warning: Input compaction encountered an issue: {}\n", e)),
+        }
+    }
+
+    // Step 2: Determine processing range
+    // If --force is not set and source size >= 13, only process up to the last compacted batch
+    let max_input_batch = if !config.force_recount && source_size >= 13 {
+        match get_last_compacted_batch(&config.input_dir, source_size) {
+            Some(last_compacted) => {
+                test_print(&format!("Processing only compacted input files up to batch {:06} (use --force to process all files)", last_compacted));
+                Some(last_compacted)
+            }
+            None => {
+                test_print("Warning: No compacted input files found. Will process all available files.");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Step 3: Process the requested size
     let mut global_state = GlobalFileState::from_sources(&config.output_dir, output_size)
         .map_err(|e| format!("Failed to load global state: {}", e))?;
     
     if let Some(batch) = start_batch {
         test_print(&format!("Start processing from input batch {} to create no-set-lists of size {}:", batch, output_size));
-        no_set_lists.process_from_batch(source_size, batch, &config.max_lists_per_file, Some(&mut global_state));
+        
+        // If max_input_batch is set, we need to handle the range specially
+        if let Some(max_batch) = max_input_batch {
+            if batch <= max_batch {
+                // Process from start_batch up to max_batch
+                test_print(&format!("   ... processing batches {:06} to {:06} (compacted only)", batch, max_batch));
+                no_set_lists.process_batch_range(source_size, batch, max_batch, &config.max_lists_per_file, Some(&mut global_state));
+            } else {
+                test_print(&format!("Warning: Start batch {} is beyond last compacted batch {}. No processing needed.", batch, max_batch));
+            }
+        } else {
+            no_set_lists.process_from_batch(source_size, batch, &config.max_lists_per_file, Some(&mut global_state));
+        }
     } else {
         test_print(&format!("Start processing files to create no-set-lists of size {}:", output_size));
-        no_set_lists.process_all_files_of_current_size_n(source_size, &config.max_lists_per_file, Some(&mut global_state));
+        
+        if let Some(max_batch) = max_input_batch {
+            // Process from 0 to max_batch
+            test_print(&format!("   ... processing batches 000000 to {:06} (compacted only)", max_batch));
+            no_set_lists.process_batch_range(source_size, 0, max_batch, &config.max_lists_per_file, Some(&mut global_state));
+        } else {
+            no_set_lists.process_all_files_of_current_size_n(source_size, &config.max_lists_per_file, Some(&mut global_state));
+        }
     }
     
     test_print(&format!("\nCompleted size {}! Generated files: no-set-list_{:02}_batch_*.rkyv\n", output_size, output_size));
+    
+    // Step 4: For sizes 13+, run compaction on output directory after processing
+    if output_size >= 13 {
+        test_print(&format!("\n=== Post-processing: Compacting output files (size {}) ===", output_size));
+        match compact_size_files(&config.output_dir, &config.output_dir, output_size, config.max_lists_per_file, None) {
+            Ok(_) => test_print("Output compaction completed successfully.\n"),
+            Err(e) => test_print(&format!("Warning: Output compaction encountered an issue: {}\n", e)),
+        }
+    }
     
     if start_batch.is_some() {
         Ok(format!("Size {} processing completed (restarted from batch {})", output_size, start_batch.unwrap()))

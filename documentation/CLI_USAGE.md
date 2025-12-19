@@ -2,9 +2,13 @@
 
 ## Overview
 
-Version 0.4.11 provides four operational modes: size processing (with optional restart from specific batch), unitary processing (single batch - the only canonical way to fix defective files), count mode, and compact mode for consolidating small files. The program uses a hybrid stack/heap implementation with GlobalFileState for tracking.
+Version 0.4.12 provides four operational modes: size processing (with optional restart from specific batch), unitary processing (single batch - the only canonical way to fix defective files), count mode, and compact mode for consolidating small files. The program uses a hybrid stack/heap implementation with GlobalFileState for tracking.
 
-**Recent fixes**: Fixed find_input_filename bug that prevented restart mode from working correctly. Added optional max_batch parameter to compact mode for controlled compaction.
+**New in 0.4.12**: 
+- Automatic compaction workflow for sizes 13+
+- Compacted file recognition (*_compacted.rkyv)
+- Smart processing: only compacted files by default (use --force for all files)
+- Auto-compact input before processing and output after processing (sizes 13+)
 
 ## Running the Program
 
@@ -39,6 +43,12 @@ cargo run --release -- --size 7
 
 # Restart from specific input batch (e.g., size 5 from batch 2)
 cargo run --release -- --size 5 2
+
+# Build size 14 with auto-compaction (input & output)
+cargo run --release -- --size 14 -i ./12_to_13c -o ./13c_to_14c
+
+# Build size 14 with --force (process all files, not just compacted)
+cargo run --release -- --size 14 -i ./12_to_13c -o ./13c_to_14c --force
 ```
 
 ### Custom Output Directory
@@ -84,6 +94,7 @@ Options:
 
       --force
           Force regeneration of count file (use with --size BATCH or --unitary)
+          For sizes 13+: Process all files, not just compacted ones
 
   -o, --output-path <OUTPUT_PATH>
           Output directory path (optional)
@@ -109,6 +120,11 @@ cargo run --release -- --size 5 2 -i "./input" -o "./output"
 cargo run --release -- --size 5 2 --force -i "./input" -o "./output"
 ```
 
+**For sizes 13+:** The restart mode will automatically:
+1. Compact input files before processing
+2. Only process compacted input files (unless --force is used)
+3. Compact output files after processing
+
 ### Unitary Mode
 
 Process only one specific batch (canonical way to fix defective files):
@@ -132,7 +148,7 @@ cargo run --release -- --count 6 -o "T:\data\funny_set_exploration"
 
 ### Compact Mode
 
-Consolidate small files into larger batches (for later waves with ratio < 1.0):
+Consolidate small files into larger batches:
 
 ```powershell
 # Compact all size 15 files into 10M-entry batches
@@ -154,6 +170,28 @@ This mode:
 - Deletes or shrinks original files immediately after each compacted file creation
 - Uses GlobalFileState for crash-safe, idempotent operation
 - Runs until no more eligible files remain
+- Automatically invoked by --size mode for sizes 13+
+
+### Size 13+ Auto-Compaction Workflow
+
+For sizes 13 and above, the `--size` mode automatically manages compaction:
+
+```powershell
+# Build size 14 - automatically compacts input and output
+cargo run --release -- --size 14 -i "./12_to_13c" -o "./13c_to_14c"
+```
+
+**Workflow:**
+1. **Pre-processing**: Compacts all size 13 input files in the input directory
+2. **Processing**: Only processes compacted input files (batches 0 to last_compacted_batch)
+3. **Post-processing**: Compacts all size 14 output files in the output directory
+
+**To process all files (including non-compacted):**
+```powershell
+cargo run --release -- --size 14 -i "./12_to_13c" -o "./13c_to_14c" --force
+```
+
+The `--force` flag bypasses the compacted-only restriction and processes all available input files.
 
 ## Prerequisites
 

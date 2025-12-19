@@ -1,9 +1,11 @@
-/// Version 0.4.9: Hybrid stack-optimized computation with GlobalFileState persistence
+/// Version 0.4.12: Hybrid stack-optimized computation with auto-compaction for sizes 13+
 /// 
 /// This implementation combines the best of both worlds:
 /// - Uses NoSetList (stack arrays) for computation → 4-5× faster
 /// - Converts to NoSetListSerialized (heap Vecs) for I/O → compact 2GB files
 /// - GlobalFileState with incremental JSON/TXT saves after each output file
+/// - Recognizes both regular and compacted input files (*_compacted.rkyv)
+/// - Supports batch range processing for smart compaction workflows
 /// 
 /// Performance characteristics:
 /// - Computation: Same speed as v0.3.0 (stack-optimized)
@@ -623,6 +625,59 @@ impl ListOfNSL {
         
         debug_print(&format!("process_from_batch: Finished processing size {:02} from batch {}", 
             self.current_size, start_batch));
+        
+        // Report results
+        let elapsed_secs = start_time.elapsed().as_secs_f64();
+        created_a_total_of(self.new_total_list_count, self.current_size + 1, elapsed_secs);
+        self.print_timing_report(start_time);
+        
+        self.new_total_list_count
+    }
+    
+    /// Process files within a specific batch range (inclusive)
+    /// Used when we want to limit processing to a specific range (e.g., only compacted files)
+    pub fn process_batch_range(&mut self, current_size: u8, start_batch: u32, end_batch: u32, max: &u64, mut state: Option<&mut GlobalFileState>) -> u64 {
+        if current_size < 3 {
+            debug_print("process_batch_range: size must be >= 3");
+            return 0;
+        }
+        
+        debug_print(&format!("process_batch_range: processing no-set-{:02} from batch {} to {}", 
+            current_size, start_batch, end_batch));
+        
+        let start_time = std::time::Instant::now();
+        
+        // Initialize from specific batch
+        self.init_processing_state(current_size, start_batch);
+        self.init_output_batch(start_batch);  // Scan for next available output batch
+        
+        // Process batches in the range [start_batch, end_batch]
+        let mut batches_processed = 0u64;
+        for batch in start_batch..=end_batch {
+            self.current_file_batch = batch;
+            
+            // Add blank line before loading next batch (except for the first one)
+            if batches_processed > 0 {
+                test_print("");
+            }
+            test_print(&format!("   ... loading batch {}", self.current_file_batch));
+            
+            // Try to load this batch
+            if self.refill_current_from_file() {
+                test_print(&format!("   ... loaded {:>10} lists from batch {}", 
+                    self.current.len().separated_string(), self.current_file_batch));
+                
+                // Process the cards and create new lists
+                self.process_one_file_of_current_size_n(max, state.as_deref_mut());
+                batches_processed += 1;
+            } else {
+                // File not found - this could be normal if some batches don't exist
+                test_print(&format!("   ... Batch {:06} not found, skipping", batch));
+            }
+        }
+        
+        debug_print(&format!("process_batch_range: Finished processing size {:02} batches {} to {} ({} batches processed)", 
+            self.current_size, start_batch, end_batch, batches_processed));
         
         // Report results
         let elapsed_secs = start_time.elapsed().as_secs_f64();

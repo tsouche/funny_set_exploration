@@ -4,12 +4,14 @@ A Rust-based exhaustive search algorithm to find all combinations of 12, 15, and
 
 ## Project Status
 
-**Current Version:** 0.4.11 (December 2025)
+**Current Version:** 0.4.12 (December 2025)
 
 **Key Features:**
 
+- **Auto-compaction workflow**: Automatic input/output compaction for sizes 13+ with smart file recognition
 - **GlobalFileState**: In-memory state with atomic JSON/TXT persistence for O(1) file lookups
 - **Unified --size mode**: Single mode for both normal processing and restart from batch
+- **Compacted file support**: Recognizes both regular and compacted files (*_compacted.rkyv)
 - **Incremental state saving**: JSON/TXT files updated after each output file is created
 - Dual input/output path support for safer processing
 - Repository integrity checking (missing batches/files detection)
@@ -86,6 +88,12 @@ cargo build --release
 
 # Compact small files into larger batches up to a certain file number
 ./target/release/funny_set_exploration --compact 8 12 -o T:\data\funny_set_exploration
+
+# Process size 14 with automatic input/output compaction
+./target/release/funny_set_exploration --size 14 -i ./12_to_13c -o ./13c_to_14c
+
+# Process size 14 with --force (process all files, not just compacted)
+./target/release/funny_set_exploration --size 14 -i ./12_to_13c -o ./13c_to_14c --force
 ```
 
 ### CLI Options
@@ -98,6 +106,8 @@ Options:
           Target output size to build (3-18), optional batch to restart from
           If omitted, runs default behavior (creates seeds + sizes 4-18)
           With BATCH: restart from specific input batch number
+          For sizes 13+: Automatically runs compaction on input before and output after processing
+          For sizes 13+: Only processes compacted input files by default (use --force for all)
 
       --unitary <SIZE> <BATCH>
           Process only one specific input batch (unitary processing)
@@ -114,20 +124,28 @@ Options:
           Validates batch sequence, consolidated count file, and intermediary files
           Reports missing batches and files with [OK]/[!!] indicators
 
-      --compact <SIZE>
-          Compact small output files into larger 10M-entry batches
-          SIZE refers to OUTPUT size. Consolidates files and writes new compacted files (originals preserved).
-          New format: nsl_{size}c_batch_{batch}_from_{first_source}.rkyv (note the 'c' suffix after the size)
-          Use when later processing waves create many small files.
-          Intermediary count files (input-intermediary) now use the pattern:
-            nsl_{output_size:02}_intermediate_count_from_{input_size:02}_{input_batch:06}.txt
-          Use the script `scripts/rename_intermediary_counts.ps1` to migrate existing intermediary files to the new naming scheme.
+      --compact <SIZE> [MAX_BATCH]
+          Compact small output files into larger batches (10M entries per file)
+          SIZE refers to OUTPUT size
+          Optional MAX_BATCH: Stop compaction after processing files up to this batch number
+          Consolidates files and writes new compacted files (originals preserved)
+          Compacted format: nsl_{src:02}_batch_{src_batch:06}_to_{tgt:02}_batch_{tgt_batch:06}_compacted.rkyv
+          Automatically used by --size mode for sizes 13+
 
       --force
           Force regeneration of count file (use with --count, --size BATCH, or --unitary)
+          For sizes 13+: Process all files, not just compacted ones
+
+      --keep_state
+          Keep partial and processed state files after a successful run
+
+  -i, --input-path <INPUT_PATH>
+          Input directory path (optional, defaults to current directory)
+          Directory to read input files from
 
   -o, --output-path <OUTPUT_PATH>
-          Output directory path (optional)
+          Output directory path (optional, defaults to input directory)
+          Directory to write output files to
           Examples:
             Windows: T:\data\funny_set_exploration
             Linux:   /mnt/nas/data/funny_set_exploration
@@ -139,7 +157,13 @@ Options:
 
 ### Output Files
 
-Files are named: `nlist_{size:02}_batch_{batch:06}.rkyv`
+**Regular files:** `nsl_{src:02}_batch_{src_batch:06}_to_{tgt:02}_batch_{tgt_batch:06}.rkyv`
+
+**Compacted files:** `nsl_{src:02}_batch_{src_batch:06}_to_{tgt:02}_batch_{tgt_batch:06}_compacted.rkyv`
+
+Examples:
+- `nsl_12_batch_000042_to_13_batch_001234.rkyv` - Regular file from batch 42 of size 12 to batch 1234 of size 13
+- `nsl_12_batch_000042_to_13_batch_001234_compacted.rkyv` - Compacted version of the same
 
 Examples:
 

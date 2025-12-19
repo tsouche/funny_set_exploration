@@ -25,7 +25,7 @@ Welcome to the funny_set_exploration project documentation!
 
 Exhaustively finds all combinations of Set cards (12, 15, and 18 cards) that contain no valid sets.
 
-## Current Status (v0.2.2)
+## Current Status (v0.4.12)
 
 ✅ **Working:**
 

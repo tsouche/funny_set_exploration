@@ -1,3 +1,17 @@
+//! File state tracking and persistence module
+//!
+//! This module provides GlobalFileState for in-memory tracking of all output files
+//! with atomic JSON/TXT persistence. It enables O(1) file lookups and incremental
+//! state updates during processing.
+//!
+//! Key features:
+//! - BTreeMap-backed in-memory state for fast lookups
+//! - Multi-source loading: JSON (fast) → TXT → intermediary → rkyv scan
+//! - Atomic persistence with .tmp files and rename
+//! - File integrity checking and metadata tracking
+//!
+//! Used by all processing modes for state management
+
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::BufRead;

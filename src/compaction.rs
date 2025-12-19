@@ -1,3 +1,16 @@
+//! Compaction module for consolidating small output files into larger batches
+//!
+//! This module provides functionality to combine multiple small .rkyv files into
+//! larger compacted files, reducing file count and improving I/O efficiency.
+//!
+//! Key features:
+//! - In-place compaction using GlobalFileState for crash safety
+//! - Incremental processing with state persistence after each compacted file
+//! - Support for partial compaction with max_batch parameter
+//! - Automatic cleanup of consumed source files
+//!
+//! Used by --compact mode and automatically by --size mode for sizes 13+
+
 use std::path::Path;
 use memmap2::Mmap;
 use rkyv::check_archived_root;

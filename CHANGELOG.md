@@ -5,6 +5,37 @@ All notable changes to the funny_set_exploration project are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.12] - 2025-12-19
+
+### Added
+
+- **Auto-compaction workflow for sizes 13+**: Automatic compaction of input and output directories
+  - Pre-processing: Compacts input files before processing (sizes 13+)
+  - Post-processing: Compacts output files after processing (sizes 13+)
+  - Smart file recognition: Processes only compacted files by default
+  - `--force` flag: Process all files regardless of compaction status
+- **Compacted file recognition**: `find_input_filename()` now detects both regular and compacted files
+  - Prefers `*_compacted.rkyv` over regular `.rkyv` files when both exist
+  - Fixes issue where --size mode couldn't find compacted input files
+- **process_batch_range()**: New method to process a specific range of input batches
+  - Enables processing only batches 0 to last_compacted_batch
+  - Used when --force is not set and input size >= 13
+- **get_last_compacted_batch()**: Helper function to find highest compacted batch number
+  - Used to determine processing limits when avoiding non-compacted files
+
+### Changed
+
+- **--size mode behavior for sizes 13+**:
+  - Now runs compaction on input directory before processing
+  - Only processes compacted input files unless --force is used
+  - Runs compaction on output directory after processing
+  - Sizes < 13 remain unchanged (no auto-compaction)
+
+### Fixed
+
+- File search pattern now correctly matches `*_compacted.rkyv` filenames
+- Processing pipeline now seamlessly handles compacted file workflows
+
 ## [0.4.11] - 2025-12-18
 
 ### Added
