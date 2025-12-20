@@ -5,6 +5,29 @@ All notable changes to the funny_set_exploration project are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.13] - 2025-12-20
+
+### Added
+
+- **Cascade mode (`--cascade <INPUT_SIZE>`)**: Automated multi-size processing
+  - Process all sizes starting from a given input size (12-19) up to size 20
+  - Automatically detects last processed batch per size and continues from there
+  - Spawns subprocesses for each size level
+  - Stops on first failure to prevent cascading errors
+  - Usage: `funny.exe --cascade 12 -i X:\funny`
+- **Directory structure support**: Recognizes standard cascade directory layout
+  - Input size 12: `11_to_12/` directory
+  - Output sizes 13+: `{size-1}c_to_{size}c/` directories
+  - Automatically creates missing output directories
+- **Batch detection helpers**:
+  - `find_max_source_batch()`: Scans output directory for highest source batch
+  - `get_cascade_directories()`: Maps input sizes to directory paths
+
+### Changed
+
+- Extended CLI help documentation with cascade mode examples and directory structure
+- Updated version to 0.4.13 across all documentation
+
 ## [0.4.12] - 2025-12-19
 
 ### Added

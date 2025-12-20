@@ -4,10 +4,11 @@ A Rust-based exhaustive search algorithm to find all combinations of 12, 15, and
 
 ## Project Status
 
-**Current Version:** 0.4.12 (December 2025)
+**Current Version:** 0.4.13 (December 2025)
 
 **Key Features:**
 
+- **Cascade mode**: Automated multi-size processing from a starting input size (12-19) up to size 20
 - **Auto-compaction workflow**: Automatic input/output compaction for sizes 13+ with smart file recognition
 - **GlobalFileState**: In-memory state with atomic JSON/TXT persistence for O(1) file lookups
 - **Unified --size mode**: Single mode for both normal processing and restart from batch
@@ -94,6 +95,12 @@ cargo build --release
 
 # Process size 14 with --force (process all files, not just compacted)
 ./target/release/funny_set_exploration --size 14 -i ./12_to_13c -o ./13c_to_14c --force
+
+# Cascade mode: process all sizes 13-20 starting from input size 12
+./target/release/funny_set_exploration --cascade 12 -i X:\funny
+
+# Cascade mode: process sizes 16-20 starting from input size 15
+./target/release/funny_set_exploration --cascade 15 -i X:\funny
 ```
 
 ### CLI Options
@@ -114,6 +121,13 @@ Options:
           This is the ONLY canonical way to overwrite/fix defective files.
           SIZE refers to INPUT size. Reprocesses only this batch.
           Use --force to regenerate count file first.
+
+      --cascade <INPUT_SIZE>
+          Cascade mode: process all sizes starting from INPUT_SIZE (12-19) up to size 20
+          Automatically detects last processed batch per size and continues from there
+          Requires -i to specify root directory with subdirectories (e.g., X:\funny)
+          Expected structure: 11_to_12/, 12_to_13c/, 13c_to_14c/, etc.
+          Each command processes all remaining unprocessed batches for that size
 
       --count <SIZE>
           Count existing files for target size, create summary report
@@ -142,6 +156,7 @@ Options:
   -i, --input-path <INPUT_PATH>
           Input directory path (optional, defaults to current directory)
           Directory to read input files from
+          For cascade mode: root directory containing subdirectories
 
   -o, --output-path <OUTPUT_PATH>
           Output directory path (optional, defaults to input directory)

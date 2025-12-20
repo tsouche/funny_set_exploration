@@ -1,4 +1,5 @@
-/// Version 0.4.12: Hybrid stack-optimized computation with auto-compaction for sizes 13+
+/// Version 0.4.13: Hybrid stack-optimized computation with auto-compaction for sizes 13+
+/// Added: Cascade mode for automated multi-size processing
 /// 
 /// This implementation combines the best of both worlds:
 /// - Uses NoSetList (stack arrays) for computation → 4-5× faster

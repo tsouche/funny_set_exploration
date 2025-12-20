@@ -2,9 +2,14 @@
 
 ## Overview
 
-Version 0.4.12 provides four operational modes: size processing (with optional restart from specific batch), unitary processing (single batch - the only canonical way to fix defective files), count mode, and compact mode for consolidating small files. The program uses a hybrid stack/heap implementation with GlobalFileState for tracking.
+Version 0.4.13 provides multiple operational modes: size processing (with optional restart from specific batch), cascade mode (automated multi-size processing), unitary processing (single batch - the only canonical way to fix defective files), count mode, check mode, and compact mode for consolidating small files. The program uses a hybrid stack/heap implementation with GlobalFileState for tracking.
 
-**New in 0.4.12**: 
+**New in 0.4.13**: 
+- **Cascade mode**: Automated processing of sizes 13-20 starting from input size 12-19
+- Automatically detects last processed batch per size
+- Spawns subprocesses for each size level
+
+**Previous (0.4.12)**: 
 - Automatic compaction workflow for sizes 13+
 - Compacted file recognition (*_compacted.rkyv)
 - Smart processing: only compacted files by default (use --force for all files)
@@ -51,6 +56,55 @@ cargo run --release -- --size 14 -i ./12_to_13c -o ./13c_to_14c
 cargo run --release -- --size 14 -i ./12_to_13c -o ./13c_to_14c --force
 ```
 
+### Cascade Mode (New in 0.4.13)
+
+Automatically process all sizes starting from a given input size up to size 20:
+
+```powershell
+# Process sizes 13-20 starting from input size 12
+cargo run --release -- --cascade 12 -i X:\funny
+
+# Process sizes 16-20 starting from input size 15
+cargo run --release -- --cascade 15 -i X:\funny
+```
+
+**How Cascade Mode Works:**
+
+1. For each output size (13-20), cascade mode:
+   - Scans the output directory to find the last processed input batch
+   - Determines the next batch to process (last + 1, or 0 if no files exist)
+   - Executes: `funny.exe --size {output_size} {next_batch} -i {input_dir} -o {output_dir}`
+   - Each command processes all remaining unprocessed batches
+
+2. Expected directory structure:
+   ```
+   X:\funny\
+     ├── 11_to_12\          # Input for size 13
+     ├── 12_to_13c\         # Output size 13, input for 14
+     ├── 13c_to_14c\        # Output size 14, input for 15
+     ├── 14c_to_15c\        # Output size 15, input for 16
+     └── ...                # And so on
+   ```
+
+3. The cascade stops at the first failure to prevent error propagation
+
+4. Only **one command per size** is executed (8 total for sizes 13-20)
+
+**Example Output:**
+
+For a system where:
+- Size 13: last processed batch 99 → processes 100-621
+- Size 14: last processed batch 116 → processes 117 onwards
+- Size 15: last processed batch 105 → processes 106 onwards
+
+The cascade mode executes:
+```
+funny.exe --size 13 100 -i X:\funny\11_to_12 -o X:\funny\12_to_13c
+funny.exe --size 14 117 -i X:\funny\12_to_13c -o X:\funny\13c_to_14c
+funny.exe --size 15 106 -i X:\funny\13c_to_14c -o X:\funny\14c_to_15c
+... (and so on for sizes 16-20)
+```
+
 ### Custom Output Directory
 
 You can specify a custom output directory with `-o` or `--output-path`:
@@ -92,9 +146,19 @@ Options:
           Count existing files for target size
           Creates nsl_{size:02}_global_count.txt summary report
 
+      --cascade <INPUT_SIZE>
+          Cascade mode: process all sizes starting from INPUT_SIZE (12-19)
+          Automatically detects last processed batch per size
+          Processes sizes from INPUT_SIZE+1 up to size 20
+          Requires -i to specify root directory with subdirectories
+
       --force
           Force regeneration of count file (use with --size BATCH or --unitary)
           For sizes 13+: Process all files, not just compacted ones
+
+  -i, --input-path <INPUT_PATH>
+          Input directory path (optional)
+          For cascade mode: root directory containing subdirectories
 
   -o, --output-path <OUTPUT_PATH>
           Output directory path (optional)

@@ -1,12 +1,12 @@
 /// Manage the search for the grail of Set: combinations of 12 / 15 / 18 cards 
 /// with no sets
 ///
-/// Version 0.4.12 - Enhanced --size mode with compaction workflow for sizes 13+
-/// Fixed: --size mode now recognizes compacted input files (*_compacted.rkyv)
-/// Added: Automatic input compaction before processing (sizes 13+)
-/// Added: Automatic output compaction after processing (sizes 13+)
-/// Added: --force flag to process all files, not just compacted ones (sizes 13+)
-/// Added: process_batch_range method to handle limited batch ranges
+/// Version 0.4.13 - Added --cascade mode for automated multi-size processing
+/// Added: --cascade mode to process sizes 13-20 from a batch of size 12 files
+/// Enhanced: Cascade mode automatically detects last processed batch per size
+/// Enhanced: Cascade mode processes all unprocessed batches for each size
+/// Previous: --size mode with compaction workflow for sizes 13+
+/// Previous: Automatic input/output compaction for sizes 13+
 /// 
 /// CLI Usage:
 ///   funny.exe --size 3 -o .\output                          # Create seed lists (size 3)
@@ -15,6 +15,7 @@
 ///   funny.exe --size 14 -i .\input -o .\output              # Build size 14 (auto-compact input & output)
 ///   funny.exe --size 14 -i .\input -o .\output --force      # Build size 14 (process all files, not just compacted)
 ///   funny.exe --unitary 5 2 -i .\input -o .\output          # Process only input batch 2
+///   funny.exe --cascade 12 -i X:\funny                      # Cascade from size 12 (process 13-20)
 ///   funny.exe --count 6 -i .\output                         # Count size 6 files
 ///   funny.exe --check 6 -o .\output                         # Check size 6 integrity
 ///   funny.exe --compact 15 -i .\14_to_15                    # Compact all size 15 files
@@ -25,10 +26,13 @@
 ///   --size, -s <SIZE> [BATCH]  Target output size (3-18), optional batch to restart from
 ///                              If omitted, runs default behavior (creates seeds + sizes 4-18)
 ///   --unitary <SIZE> <BATCH>   Process only one specific input batch (unitary processing)
+///   --cascade <INPUT_SIZE>     Process all sizes from INPUT_SIZE (12-19) to size 20
+///                              Automatically detects last processed batch per size
 ///   --count <SIZE>             Count existing files and create summary report
 ///   --check <SIZE>             Check repository integrity (missing batches/files)
 ///   --force                    Force regeneration of count file (with size batch/unitary)
 ///   --input-path, -i           Optional: Directory for input files (defaults to current)
+///                              For cascade mode: root directory with subdirectories
 ///   --output-path, -o          Optional: Directory for output files (defaults to input)
 ///
 /// Implementation:
@@ -118,6 +122,20 @@ use crate::utils::*;
         "   - Input path (-i): directory with rkyv state file.\n",
         "   - Output path: not used.\n",
         "   - Example: --create-json 10 -i ./09_to_10\n\n",
+        "8) Cascade mode (`--cascade <INPUT_SIZE>`)\n",
+        "   - Purpose: Process all output sizes starting from a given\n",
+        "     input size (12-19) up to size 20.\n",
+        "   - Automatically detects last processed batch per size and\n",
+        "     continues from there.\n",
+        "   - Input path (-i): root directory containing subdirectories\n",
+        "     (11_to_12, 12_to_13c, 13c_to_14c, etc.).\n",
+        "   - Output path: not used (determined automatically).\n",
+        "   - Example: --cascade 12 -i X:\\funny\n",
+        "   - Directory structure expected:\n",
+        "     11_to_12/         (input for size 13)\n",
+        "     12_to_13c/        (output size 13, input for 14)\n",
+        "     13c_to_14c/       (output size 14, input for 15)\n",
+        "     ... and so on\n\n",
         "COMMON FLAGS: -i/--input-path, -o/--output-path, --force,\n",
         "  --keep_state\n",
         "  The sections above show how each flag affects specific\n",
@@ -168,6 +186,12 @@ struct Args {
     #[arg(long, conflicts_with_all = ["size", "unitary", "count", "compact"], help = "Check repository integrity for a specific size")]
     check: Option<u8>,
 
+    /// Cascade mode: process all sizes starting from a given input size
+    /// Generates output files of growing sizes by processing unprocessed batches.
+    /// Takes the starting input size (12-19) and uses the current directory or -i as root.
+    #[arg(long, conflicts_with_all = ["size", "unitary", "count", "compact", "check"], help = "Cascade mode: process sizes starting from input size (12-19)")]
+    cascade: Option<u8>,
+
     /// Input directory path (optional)
     /// Directory to read input files from; usage varies by mode.
     #[arg(short, long, help = "Input directory path (optional)")]
@@ -204,6 +228,7 @@ enum ProcessingMode {
     Compact { size: u8, max_batch: Option<u32> },
     Size { size: u8, start_batch: Option<u32> },
     Unitary { size: u8, batch: u32 },
+    Cascade { starting_input_size: u8, root_directory: String },
     Default,
 }
 
@@ -215,7 +240,8 @@ impl ProcessingMode {
             ProcessingMode::LegacyCount { .. } |
             ProcessingMode::CreateJson { .. } |
             ProcessingMode::Check { .. } | 
-            ProcessingMode::Compact { .. })
+            ProcessingMode::Compact { .. } |
+            ProcessingMode::Cascade { .. })
     }
 }
 
@@ -249,6 +275,11 @@ fn resolve_paths(
         ProcessingMode::Check { .. } => {
             // Check only uses output
             (String::new(), output_arg.unwrap_or(".").to_string())
+        },
+        ProcessingMode::Cascade { .. } => {
+            // Cascade uses input as root directory
+            let root = input_arg.unwrap_or(".").to_string();
+            (root, String::new())
         },
         ProcessingMode::Size { .. } | ProcessingMode::Unitary { .. } | ProcessingMode::Compact { .. } => {
             // These modes default output to input if not specified
@@ -297,7 +328,11 @@ fn print_directories(input: &str, output: &str) {
 /// Build unified configuration from parsed arguments
 fn build_config(args: &Args, max_per_file: u64) -> Result<ProcessingConfig, String> {
     // Determine processing mode from arguments
-    let mode = if let Some(ref compact_vec) = args.compact {
+    let mode = if let Some(starting_input_size) = args.cascade {
+        validate_size(starting_input_size, "Cascade", 12, 19)?;
+        let root_directory = args.input_path.clone().unwrap_or_else(|| ".".to_string());
+        ProcessingMode::Cascade { starting_input_size, root_directory }
+    } else if let Some(ref compact_vec) = args.compact {
         let compact_size = compact_vec[0] as u8;
         validate_size(compact_size, "Compact", 3, 18)?;
         let max_batch = if compact_vec.len() == 2 {
@@ -661,6 +696,10 @@ fn execute_mode(config: &ProcessingConfig) -> Result<String, String> {
             execute_unitary_mode(config, *size, *batch)
         },
         
+        ProcessingMode::Cascade { starting_input_size, root_directory } => {
+            execute_cascade_mode(*starting_input_size, root_directory, config.max_lists_per_file)
+        },
+        
         ProcessingMode::Default => {
             execute_default_mode(config)
         },
@@ -819,6 +858,166 @@ fn execute_unitary_mode(config: &ProcessingConfig, unitary_size: u8, unitary_bat
     
     Ok(format!("Unitary processing completed for size {} batch {}", unitary_size, unitary_batch))
 }
+
+/// Get directory path for a given size in cascade mode
+/// Returns (input_dir, output_dir) for the given output size
+fn get_cascade_directories(root_directory: &str, input_size: u8) -> (String, String) {
+    use std::path::Path;
+    
+    let output_size = input_size + 1;
+    
+    // Input directory pattern
+    let input_dir = if input_size == 12 {
+        // Size 12 comes from 11_to_12
+        Path::new(root_directory).join("11_to_12")
+    } else {
+        // Size 13+ comes from {size-1}c_to_{size}c
+        Path::new(root_directory).join(format!("{}c_to_{}c", input_size - 1, input_size))
+    };
+    
+    // Output directory pattern
+    let output_dir = if output_size == 13 {
+        // Size 13 goes to 12_to_13c
+        Path::new(root_directory).join("12_to_13c")
+    } else {
+        // Size 14+ goes to {size-1}c_to_{size}c
+        Path::new(root_directory).join(format!("{}c_to_{}c", output_size - 1, output_size))
+    };
+    
+    (
+        input_dir.to_string_lossy().to_string(),
+        output_dir.to_string_lossy().to_string()
+    )
+}
+
+/// Find the highest source batch number in the output directory
+/// Returns None if no files found, or the max source batch number
+fn find_max_source_batch(output_dir: &str, output_size: u8) -> Option<u32> {
+    use std::fs;
+    
+    let entries = match fs::read_dir(output_dir) {
+        Ok(e) => e,
+        Err(_) => return None,
+    };
+    
+    let pattern = format!("_to_{:02}_batch_", output_size);
+    let mut max_source_batch: Option<u32> = None;
+    
+    for entry in entries.flatten() {
+        if let Some(name) = entry.file_name().to_str() {
+            if name.starts_with("nsl_") && name.contains(&pattern) && name.ends_with(".rkyv") {
+                // Parse source batch from filename: nsl_{size}_batch_{source_batch}_to_...
+                if let Some(to_pos) = name.find("_to_") {
+                    let before_to = &name[..to_pos];
+                    if let Some(batch_pos) = before_to.rfind("_batch_") {
+                        let batch_str = &before_to[batch_pos + 7..];
+                        if let Ok(source_batch) = batch_str.parse::<u32>() {
+                            max_source_batch = Some(
+                                max_source_batch.map_or(source_batch, |current| current.max(source_batch))
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    max_source_batch
+}
+
+/// Execute cascade mode: process all sizes starting from a given input size
+fn execute_cascade_mode(starting_input_size: u8, root_directory: &str, _max_lists_per_file: u64) -> Result<String, String> {
+    use std::path::Path;
+    use std::process::Command;
+    
+    test_print(&format!("\n================================================================="));
+    test_print(&format!("CASCADE MODE - Starting from input size {}", starting_input_size));
+    test_print(&format!("Root directory: {}", root_directory));
+    test_print(&format!("=================================================================\n"));
+    
+    // Get the current executable path
+    let current_exe = std::env::current_exe()
+        .map_err(|e| format!("Failed to get current executable path: {}", e))?;
+    
+    let mut total_sizes_processed = 0;
+    let mut total_commands_executed = 0;
+    
+    // Process each size from starting_input_size to 19 (output sizes 13 to 20)
+    for input_size in starting_input_size..=19 {
+        let output_size = input_size + 1;
+        
+        test_print(&format!("\n--- Step {}: Processing size {} (from input size {}) ---",
+            input_size - starting_input_size + 1, output_size, input_size));
+        
+        // Get directories
+        let (input_dir, output_dir) = get_cascade_directories(root_directory, input_size);
+        
+        // Check if input directory exists
+        if !Path::new(&input_dir).exists() {
+            test_print(&format!("   Input directory does not exist: {}", input_dir));
+            test_print(&format!("   Skipping size {}", output_size));
+            continue;
+        }
+        
+        // Check if output directory exists, create if not
+        if !Path::new(&output_dir).exists() {
+            test_print(&format!("   Output directory does not exist, creating: {}", output_dir));
+            std::fs::create_dir_all(&output_dir)
+                .map_err(|e| format!("Failed to create output directory {}: {}", output_dir, e))?;
+        }
+        
+        // Find the last processed batch
+        let last_processed = find_max_source_batch(&output_dir, output_size);
+        let next_batch = match last_processed {
+            Some(batch) => batch + 1,
+            None => 0,
+        };
+        
+        test_print(&format!("   Last processed input batch: {}",
+            last_processed.map_or("none".to_string(), |b| format!("{:06}", b))));
+        test_print(&format!("   Next batch to process: {:06}", next_batch));
+        test_print(&format!("   Input directory:  {}", input_dir));
+        test_print(&format!("   Output directory: {}", output_dir));
+        
+        // Build the command
+        test_print(&format!("\n   Executing: funny.exe --size {} {} -i \"{}\" -o \"{}\"",
+            output_size, next_batch, input_dir, output_dir));
+        
+        let mut cmd = Command::new(&current_exe);
+        cmd.arg("--size")
+            .arg(output_size.to_string())
+            .arg(next_batch.to_string())
+            .arg("-i")
+            .arg(&input_dir)
+            .arg("-o")
+            .arg(&output_dir);
+        
+        // Execute the command
+        let output = cmd.output()
+            .map_err(|e| format!("Failed to execute command: {}", e))?;
+        
+        if output.status.success() {
+            test_print(&format!("   ✓ Size {} processing completed successfully", output_size));
+            total_sizes_processed += 1;
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            test_print(&format!("   ✗ Size {} processing failed: {}", output_size, stderr));
+            test_print(&format!("   Stopping cascade at this point."));
+            break;
+        }
+        
+        total_commands_executed += 1;
+    }
+    
+    test_print(&format!("\n================================================================="));
+    test_print(&format!("CASCADE MODE COMPLETED"));
+    test_print(&format!("Sizes processed: {}", total_sizes_processed));
+    test_print(&format!("Commands executed: {}", total_commands_executed));
+    test_print(&format!("=================================================================\n"));
+    
+    Ok(format!("Cascade mode completed: {} sizes processed", total_sizes_processed))
+}
+
 /// Execute default mode: process the whole pipeline (seeds + sizes 4 to 18)
 fn execute_default_mode(config: &ProcessingConfig) -> Result<String, String> {
     use crate::list_of_nsl::ListOfNSL;
