@@ -926,18 +926,13 @@ fn find_max_source_batch(output_dir: &str, output_size: u8) -> Option<u32> {
 }
 
 /// Execute cascade mode: process all sizes starting from a given input size
-fn execute_cascade_mode(starting_input_size: u8, root_directory: &str, _max_lists_per_file: u64) -> Result<String, String> {
+fn execute_cascade_mode(starting_input_size: u8, root_directory: &str, max_lists_per_file: u64) -> Result<String, String> {
     use std::path::Path;
-    use std::process::Command;
     
     test_print(&format!("\n================================================================="));
     test_print(&format!("CASCADE MODE - Starting from input size {}", starting_input_size));
     test_print(&format!("Root directory: {}", root_directory));
     test_print(&format!("=================================================================\n"));
-    
-    // Get the current executable path
-    let current_exe = std::env::current_exe()
-        .map_err(|e| format!("Failed to get current executable path: {}", e))?;
     
     let mut total_sizes_processed = 0;
     let mut total_commands_executed = 0;
@@ -979,31 +974,33 @@ fn execute_cascade_mode(starting_input_size: u8, root_directory: &str, _max_list
         test_print(&format!("   Input directory:  {}", input_dir));
         test_print(&format!("   Output directory: {}", output_dir));
         
-        // Build the command
-        test_print(&format!("\n   Executing: funny.exe --size {} {} -i \"{}\" -o \"{}\"",
+        test_print(&format!("\n   Processing: --size {} {} -i \"{}\" -o \"{}\"\n",
             output_size, next_batch, input_dir, output_dir));
         
-        let mut cmd = Command::new(&current_exe);
-        cmd.arg("--size")
-            .arg(output_size.to_string())
-            .arg(next_batch.to_string())
-            .arg("-i")
-            .arg(&input_dir)
-            .arg("-o")
-            .arg(&output_dir);
+        // Build configuration for this size (call internal functions directly)
+        let size_config = ProcessingConfig {
+            mode: ProcessingMode::Size { 
+                size: output_size, 
+                start_batch: if next_batch > 0 { Some(next_batch) } else { None }
+            },
+            input_dir: input_dir.clone(),
+            output_dir: output_dir.clone(),
+            max_lists_per_file,
+            force_recount: false,
+            keep_state: false,
+        };
         
-        // Execute the command
-        let output = cmd.output()
-            .map_err(|e| format!("Failed to execute command: {}", e))?;
-        
-        if output.status.success() {
-            test_print(&format!("   ✓ Size {} processing completed successfully", output_size));
-            total_sizes_processed += 1;
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            test_print(&format!("   ✗ Size {} processing failed: {}", output_size, stderr));
-            test_print(&format!("   Stopping cascade at this point."));
-            break;
+        // Execute the size mode directly (same as if user entered the command)
+        match execute_mode(&size_config) {
+            Ok(_) => {
+                test_print(&format!("\n   ✓ Size {} processing completed successfully\n", output_size));
+                total_sizes_processed += 1;
+            }
+            Err(e) => {
+                test_print(&format!("\n   ✗ Size {} processing failed: {}\n", output_size, e));
+                test_print(&format!("   Stopping cascade at this point.\n"));
+                break;
+            }
         }
         
         total_commands_executed += 1;
