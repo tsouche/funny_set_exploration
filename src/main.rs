@@ -1,10 +1,11 @@
 /// Manage the search for the grail of Set: combinations of 12 / 15 / 18 cards 
 /// with no sets
 ///
-/// Version 0.4.13 - Added --cascade mode for automated multi-size processing
-/// Added: --cascade mode to process sizes 13-20 from a batch of size 12 files
-/// Enhanced: Cascade mode automatically detects last processed batch per size
-/// Enhanced: Cascade mode processes all unprocessed batches for each size
+/// Version 0.4.14 - Added --save-history mode for historical state preservation
+/// Added: --save-history mode to merge current state with historical records
+/// Enhanced: Automatic history saving after --size, --unitary, and --cascade modes
+/// Enhanced: Cascade mode calls internal functions instead of spawning subprocesses
+/// Previous: --cascade mode for automated multi-size processing
 /// Previous: --size mode with compaction workflow for sizes 13+
 /// Previous: Automatic input/output compaction for sizes 13+
 /// 
@@ -16,6 +17,7 @@
 ///   funny.exe --size 14 -i .\input -o .\output --force      # Build size 14 (process all files, not just compacted)
 ///   funny.exe --unitary 5 2 -i .\input -o .\output          # Process only input batch 2
 ///   funny.exe --cascade 12 -i X:\funny                      # Cascade from size 12 (process 13-20)
+///   funny.exe --save-history 14 -i .\14_to_15               # Save historical state for size 14
 ///   funny.exe --count 6 -i .\output                         # Count size 6 files
 ///   funny.exe --check 6 -o .\output                         # Check size 6 integrity
 ///   funny.exe --compact 15 -i .\14_to_15                    # Compact all size 15 files
@@ -28,6 +30,8 @@
 ///   --unitary <SIZE> <BATCH>   Process only one specific input batch (unitary processing)
 ///   --cascade <INPUT_SIZE>     Process all sizes from INPUT_SIZE (12-19) to size 20
 ///                              Automatically detects last processed batch per size
+///   --save-history <SIZE>      Merge current state with historical records for preservation
+///                              Automatically called after --size, --unitary, --cascade
 ///   --count <SIZE>             Count existing files and create summary report
 ///   --check <SIZE>             Check repository integrity (missing batches/files)
 ///   --force                    Force regeneration of count file (with size batch/unitary)
@@ -192,6 +196,11 @@ struct Args {
     #[arg(long, conflicts_with_all = ["size", "unitary", "count", "compact", "check"], help = "Cascade mode: process sizes starting from input size (12-19)")]
     cascade: Option<u8>,
 
+    /// Save history mode: merge current state with historical state
+    /// Preserves records of all files ever processed, even if deleted.
+    #[arg(long, conflicts_with_all = ["size", "unitary", "count", "compact", "check", "cascade"], help = "Save history: merge current state with historical records for a size")]
+    save_history: Option<u8>,
+
     /// Input directory path (optional)
     /// Directory to read input files from; usage varies by mode.
     #[arg(short, long, help = "Input directory path (optional)")]
@@ -229,6 +238,7 @@ enum ProcessingMode {
     Size { size: u8, start_batch: Option<u32> },
     Unitary { size: u8, batch: u32 },
     Cascade { starting_input_size: u8, root_directory: String },
+    SaveHistory { size: u8 },
     Default,
 }
 
@@ -241,7 +251,8 @@ impl ProcessingMode {
             ProcessingMode::CreateJson { .. } |
             ProcessingMode::Check { .. } | 
             ProcessingMode::Compact { .. } |
-            ProcessingMode::Cascade { .. })
+            ProcessingMode::Cascade { .. } |
+            ProcessingMode::SaveHistory { .. })
     }
 }
 
@@ -280,6 +291,10 @@ fn resolve_paths(
             // Cascade uses input as root directory
             let root = input_arg.unwrap_or(".").to_string();
             (root, String::new())
+        },
+        ProcessingMode::SaveHistory { .. } => {
+            // SaveHistory uses input directory
+            (input_arg.unwrap_or(".").to_string(), String::new())
         },
         ProcessingMode::Size { .. } | ProcessingMode::Unitary { .. } | ProcessingMode::Compact { .. } => {
             // These modes default output to input if not specified
@@ -332,6 +347,9 @@ fn build_config(args: &Args, max_per_file: u64) -> Result<ProcessingConfig, Stri
         validate_size(starting_input_size, "Cascade", 12, 19)?;
         let root_directory = args.input_path.clone().unwrap_or_else(|| ".".to_string());
         ProcessingMode::Cascade { starting_input_size, root_directory }
+    } else if let Some(save_history_size) = args.save_history {
+        validate_size(save_history_size, "SaveHistory", 3, 20)?;
+        ProcessingMode::SaveHistory { size: save_history_size }
     } else if let Some(ref compact_vec) = args.compact {
         let compact_size = compact_vec[0] as u8;
         validate_size(compact_size, "Compact", 3, 18)?;
@@ -700,6 +718,10 @@ fn execute_mode(config: &ProcessingConfig) -> Result<String, String> {
             execute_cascade_mode(*starting_input_size, root_directory, config.max_lists_per_file)
         },
         
+        ProcessingMode::SaveHistory { size } => {
+            execute_save_history_mode(&config.input_dir, *size)
+        },
+        
         ProcessingMode::Default => {
             execute_default_mode(config)
         },
@@ -821,6 +843,21 @@ fn execute_size_mode(config: &ProcessingConfig, output_size: u8, start_batch: Op
         }
     }
     
+    // Save history at the end
+    test_print(&format!("\nSaving historical state for size {}...", output_size));
+    let history_config = ProcessingConfig {
+        mode: ProcessingMode::SaveHistory { size: output_size },
+        input_dir: config.output_dir.clone(),
+        output_dir: String::new(),
+        max_lists_per_file: config.max_lists_per_file,
+        force_recount: false,
+        keep_state: false,
+    };
+    match execute_mode(&history_config) {
+        Ok(_) => test_print("Historical state saved successfully.\n"),
+        Err(e) => test_print(&format!("Warning: Failed to save history: {}\n", e)),
+    }
+    
     if start_batch.is_some() {
         Ok(format!("Size {} processing completed (restarted from batch {})", output_size, start_batch.unwrap()))
     } else {
@@ -854,6 +891,21 @@ fn execute_unitary_mode(config: &ProcessingConfig, unitary_size: u8, unitary_bat
     match global_state.export_human_readable() {
         Ok(_) => test_print(&format!("Exported: {}/nsl_{:02}_global_info.json and .txt\n", config.output_dir, target_size)),
         Err(e) => test_print(&format!("Warning: Failed to export JSON/TXT: {}\n", e)),
+    }
+    
+    // Save history at the end
+    test_print(&format!("\nSaving historical state for size {}...", target_size));
+    let history_config = ProcessingConfig {
+        mode: ProcessingMode::SaveHistory { size: target_size },
+        input_dir: config.output_dir.clone(),
+        output_dir: String::new(),
+        max_lists_per_file: config.max_lists_per_file,
+        force_recount: false,
+        keep_state: false,
+    };
+    match execute_mode(&history_config) {
+        Ok(_) => test_print("Historical state saved successfully.\n"),
+        Err(e) => test_print(&format!("Warning: Failed to save history: {}\n", e)),
     }
     
     Ok(format!("Unitary processing completed for size {} batch {}", unitary_size, unitary_batch))
@@ -925,6 +977,125 @@ fn find_max_source_batch(output_dir: &str, output_size: u8) -> Option<u32> {
     max_source_batch
 }
 
+/// Execute save-history mode: merge current state with historical state
+fn execute_save_history_mode(input_dir: &str, size: u8) -> Result<String, String> {
+    use crate::file_info::GlobalFileState;
+    use std::path::Path;
+    
+    test_print(&format!("\n================================================================="));
+    test_print(&format!("SAVE HISTORY MODE - Size {}", size));
+    test_print(&format!("Directory: {}", input_dir));
+    test_print(&format!("=================================================================\n"));
+    
+    // Load current state
+    test_print("Loading current state...");
+    let current_state = GlobalFileState::from_sources(input_dir, size)
+        .map_err(|e| format!("Failed to load current state: {}", e))?;
+    let current_count = current_state.entries().len();
+    test_print(&format!("   Current state: {} entries", current_count));
+    
+    // Try to load existing history
+    let history_rkyv_path = Path::new(input_dir).join(format!("nsl_{:02}_global_info_history.rkyv", size));
+    let history_json_path = Path::new(input_dir).join(format!("nsl_{:02}_global_info_history.json", size));
+    
+    let mut historical_state = if history_rkyv_path.exists() {
+        test_print("Loading existing history from rkyv...");
+        GlobalFileState::from_history_file(input_dir, size, "rkyv")
+            .map_err(|e| format!("Failed to load history from rkyv: {}", e))?
+    } else if history_json_path.exists() {
+        test_print("Loading existing history from JSON...");
+        GlobalFileState::from_history_file(input_dir, size, "json")
+            .map_err(|e| format!("Failed to load history from JSON: {}", e))?
+    } else {
+        test_print("No existing history found, creating new historical state...");
+        GlobalFileState::new(input_dir, size)
+    };
+    
+    let initial_history_count = historical_state.entries().len();
+    test_print(&format!("   Historical state: {} entries", initial_history_count));
+    
+    // Remove entries from history that were removed from current state
+    let removed_entries = current_state.removed_entries();
+    if !removed_entries.is_empty() {
+        test_print(&format!("\nRemoving {} consumed files from history...", removed_entries.len()));
+        let mut removed_count = 0;
+        for (src, tgt, filename) in removed_entries.iter() {
+            if historical_state.has_entry(filename, *src, *tgt) {
+                historical_state.remove_file(filename, *src, *tgt);
+                removed_count += 1;
+            }
+        }
+        test_print(&format!("   Removed: {} entries from history", removed_count));
+    }
+    
+    // Merge current state into historical state
+    test_print("\nMerging current state into history...");
+    let mut added_count = 0;
+    let mut updated_count = 0;
+    
+    for ((src, tgt, filename), info) in current_state.entries().iter() {
+        if historical_state.has_entry(filename, *src, *tgt) {
+            // Entry exists, update it (in case counts changed)
+            historical_state.update_entry(
+                filename,
+                *src,
+                *tgt,
+                info.nb_lists_in_file,
+                info.compacted,
+                info.file_size_bytes,
+                info.modified_timestamp,
+            );
+            updated_count += 1;
+        } else {
+            // New entry, add it
+            historical_state.register_file(
+                filename,
+                *src,
+                *tgt,
+                info.nb_lists_in_file,
+                info.compacted,
+                info.file_size_bytes,
+                info.modified_timestamp,
+            );
+            added_count += 1;
+        }
+    }
+    
+    let final_history_count = historical_state.entries().len();
+    let removed_count = removed_entries.len();
+    
+    test_print(&format!("   Added: {} new entries", added_count));
+    test_print(&format!("   Updated: {} existing entries", updated_count));
+    if removed_count > 0 {
+        test_print(&format!("   Removed: {} consumed entries", removed_count));
+    }
+    test_print(&format!("   Total historical entries: {}", final_history_count));
+    
+    // Save historical state as triplet
+    test_print("\nSaving historical state...");
+    historical_state.flush_as_history()
+        .map_err(|e| format!("Failed to save historical state: {}", e))?;
+    historical_state.export_human_readable_as_history()
+        .map_err(|e| format!("Failed to export historical JSON/TXT: {}", e))?;
+    
+    test_print(&format!("   Saved: {}", history_rkyv_path.display()));
+    test_print(&format!("   Saved: {}", history_json_path.display()));
+    test_print(&format!("   Saved: {}", Path::new(input_dir).join(format!("nsl_{:02}_global_info_history.txt", size)).display()));
+    
+    test_print(&format!("\n================================================================="));
+    test_print(&format!("SAVE HISTORY COMPLETED"));
+    test_print(&format!("=================================================================\n"));
+    
+    let removed_count = removed_entries.len();
+    if removed_count > 0 {
+        Ok(format!("History saved: {} total entries ({} added, {} updated, {} removed)", 
+            final_history_count, added_count, updated_count, removed_count))
+    } else {
+        Ok(format!("History saved: {} total entries ({} added, {} updated)", 
+            final_history_count, added_count, updated_count))
+    }
+}
+
 /// Execute cascade mode: process all sizes starting from a given input size
 fn execute_cascade_mode(starting_input_size: u8, root_directory: &str, max_lists_per_file: u64) -> Result<String, String> {
     use std::path::Path;
@@ -994,6 +1165,22 @@ fn execute_cascade_mode(starting_input_size: u8, root_directory: &str, max_lists
         match execute_mode(&size_config) {
             Ok(_) => {
                 test_print(&format!("\n   ✓ Size {} processing completed successfully\n", output_size));
+                
+                // Save history for this size
+                test_print(&format!("   Saving historical state for size {}...", output_size));
+                let history_config = ProcessingConfig {
+                    mode: ProcessingMode::SaveHistory { size: output_size },
+                    input_dir: output_dir.clone(),
+                    output_dir: String::new(),
+                    max_lists_per_file,
+                    force_recount: false,
+                    keep_state: false,
+                };
+                match execute_mode(&history_config) {
+                    Ok(_) => test_print("   Historical state saved.\n"),
+                    Err(e) => test_print(&format!("   Warning: Failed to save history: {}\n", e)),
+                }
+                
                 total_sizes_processed += 1;
             }
             Err(e) => {
@@ -1094,7 +1281,7 @@ fn main() {
         init_log_file();
     }
 
-    banner(concat!("Funny Set Exploration [", env!("CARGO_PKG_VERSION"), "]"));
+    banner(concat!("Funny Set Exploration [0.4.14]"));
     
     // Execute mode and handle result
     match execute_mode(&config) {

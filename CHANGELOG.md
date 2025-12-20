@@ -5,6 +5,38 @@ All notable changes to the funny_set_exploration project are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.14] - 2025-12-20
+
+### Added
+
+- **History preservation mode (`--save-history <SIZE>`)**: Merge current state with historical records
+  - Creates/updates `nsl_{size}_global_info_history` file triplet (rkyv, json, txt)
+  - Loads existing history if available, merges with current state
+  - Preserves records of all files ever processed, even if deleted from disk
+  - Automatically removes consumed files from history during compaction cleanup
+  - Automatically called after --size, --unitary, and --cascade processing completes
+- **Removal tracking in GlobalFileState**: Tracks files removed during compaction
+  - `removed_entries` HashSet maintains list of consumed files
+  - Enables proper history cleanup when files are merged into compacted batches
+  - Prevents orphaned non-compacted file references in historical state
+- **Enhanced cascade mode**: Now calls internal functions instead of spawning subprocesses
+  - Uses direct function calls for better output visibility
+  - Automatic history saving after each size wave completes
+  - Maintains same error handling and stopping behavior
+
+### Changed
+
+- **GlobalFileState structure**: Added `removed_entries` field for deletion tracking
+- **remove_file() method**: Now tracks removals in `removed_entries` HashSet
+- **Cascade execution flow**: Refactored to use `execute_mode()` directly instead of `Command::spawn()`
+- All processing modes (--size, --unitary, --cascade) now automatically save history at completion
+- Updated version to 0.4.14 across all documentation and code
+
+### Fixed
+
+- History files now correctly reflect consumed files removed during compaction
+- Cascade mode output now displays in real-time (no longer silent)
+
 ## [0.4.13] - 2025-12-20
 
 ### Added

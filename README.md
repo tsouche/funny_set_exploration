@@ -4,11 +4,13 @@ A Rust-based exhaustive search algorithm to find all combinations of 12, 15, and
 
 ## Project Status
 
-**Current Version:** 0.4.13 (December 2025)
+**Current Version:** 0.4.14 (December 2025)
 
 **Key Features:**
 
-- **Cascade mode**: Automated multi-size processing from a starting input size (12-19) up to size 20
+- **History preservation**: Automatic historical state tracking with --save-history mode
+- **Cascade mode**: Automated multi-size processing from starting input size (12-19) up to size 20
+- **Smart compaction cleanup**: Automatically removes consumed files from history during compaction
 - **Auto-compaction workflow**: Automatic input/output compaction for sizes 13+ with smart file recognition
 - **GlobalFileState**: In-memory state with atomic JSON/TXT persistence for O(1) file lookups
 - **Unified --size mode**: Single mode for both normal processing and restart from batch
@@ -101,6 +103,9 @@ cargo build --release
 
 # Cascade mode: process sizes 16-20 starting from input size 15
 ./target/release/funny_set_exploration --cascade 15 -i X:\funny
+
+# Save historical state (merge current state with historical records)
+./target/release/funny_set_exploration --save-history 14 -i ./13c_to_14c
 ```
 
 ### CLI Options
@@ -125,6 +130,11 @@ Options:
       --cascade <INPUT_SIZE>
           Cascade mode: process all sizes starting from INPUT_SIZE (12-19) up to size 20
           Automatically detects last processed batch per size and continues from there
+
+      --save-history <SIZE>
+          Merge current state with historical records to preserve file history
+          Automatically called after --size, --unitary, and --cascade modes
+          Removes consumed files from history during compaction cleanup
           Requires -i to specify root directory with subdirectories (e.g., X:\funny)
           Expected structure: 11_to_12/, 12_to_13c/, 13c_to_14c/, etc.
           Each command processes all remaining unprocessed batches for that size

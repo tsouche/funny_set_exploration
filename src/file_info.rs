@@ -463,6 +463,8 @@ pub struct GlobalFileState {
     target_size: u8,
     base_dir: String,
     entries: BTreeMap<(u32, u32, String), FileInfo>,
+    /// Track files removed during compaction (for history cleanup)
+    removed_entries: HashSet<(u32, u32, String)>,
 }
 
 impl GlobalFileState {
@@ -471,7 +473,12 @@ impl GlobalFileState {
     }
     
     pub fn new(base_dir: &str, target_size: u8) -> Self {
-        Self { target_size, base_dir: base_dir.to_string(), entries: BTreeMap::new() }
+        Self { 
+            target_size, 
+            base_dir: base_dir.to_string(), 
+            entries: BTreeMap::new(),
+            removed_entries: HashSet::new(),
+        }
     }
 
     pub fn from_sources(base_dir: &str, target_size: u8) -> std::io::Result<Self> {
@@ -510,7 +517,12 @@ impl GlobalFileState {
         for e in entries {
             map.insert(Self::key(e.source_batch, e.target_batch, &e.filename), e);
         }
-        let mut state = Self { target_size, base_dir: base_dir.to_string(), entries: map };
+        let mut state = Self { 
+            target_size, 
+            base_dir: base_dir.to_string(), 
+            entries: map,
+            removed_entries: HashSet::new(),
+        };
         state.recompute_cumulative();
         state
     }
@@ -541,7 +553,10 @@ impl GlobalFileState {
     }
 
     pub fn remove_file(&mut self, filename: &str, src_batch: u32, tgt_batch: u32) {
-        self.entries.remove(&Self::key(src_batch, tgt_batch, filename));
+        let key = Self::key(src_batch, tgt_batch, filename);
+        self.entries.remove(&key);
+        // Track this removal for history cleanup
+        self.removed_entries.insert(key);
         self.recompute_cumulative();
     }
 
@@ -555,6 +570,95 @@ impl GlobalFileState {
 
     pub fn entries(&self) -> &BTreeMap<(u32, u32, String), FileInfo> {
         &self.entries
+    }
+    
+    pub fn has_entry(&self, filename: &str, src_batch: u32, tgt_batch: u32) -> bool {
+        self.entries.contains_key(&Self::key(src_batch, tgt_batch, filename))
+    }
+    
+    pub fn removed_entries(&self) -> &HashSet<(u32, u32, String)> {
+        &self.removed_entries
+    }
+    
+    pub fn update_entry(
+        &mut self,
+        filename: &str,
+        src_batch: u32,
+        tgt_batch: u32,
+        nb_lists_in_file: u64,
+        compacted: bool,
+        file_size_bytes: Option<u64>,
+        modified_timestamp: Option<i64>,
+    ) {
+        if let Some(e) = self.entries.get_mut(&Self::key(src_batch, tgt_batch, filename)) {
+            e.nb_lists_in_file = nb_lists_in_file;
+            e.compacted = compacted;
+            e.file_size_bytes = file_size_bytes;
+            e.modified_timestamp = modified_timestamp;
+            self.recompute_cumulative();
+        }
+    }
+    
+    pub fn from_history_file(base_dir: &str, target_size: u8, format: &str) -> std::io::Result<Self> {
+        let path = if format == "rkyv" {
+            Path::new(base_dir).join(format!("nsl_{:02}_global_info_history.rkyv", target_size))
+        } else {
+            Path::new(base_dir).join(format!("nsl_{:02}_global_info_history.json", target_size))
+        };
+        
+        let gfi = if format == "rkyv" {
+            GlobalFileInfo::load_rkyv(&path)?
+        } else {
+            GlobalFileInfo::load_json(&path)?
+        };
+        
+        Ok(Self::from_vec(base_dir, target_size, gfi.entries))
+    }
+    
+    pub fn flush_as_history(&mut self) -> std::io::Result<()> {
+        self.recompute_cumulative();
+        let entries_vec = self.to_vec();
+        let gfi = GlobalFileInfo { entries: entries_vec };
+
+        let rkyv_path = Path::new(&self.base_dir).join(format!("nsl_{:02}_global_info_history.rkyv", self.target_size));
+        
+        // Backup existing rkyv file before overwriting
+        if rkyv_path.exists() {
+            let backup_path = rkyv_path.with_extension("rkyv.old");
+            let _ = fs::rename(&rkyv_path, &backup_path);
+        }
+        
+        // Write to temp file, then rename atomically
+        let rkyv_tmp = rkyv_path.with_extension("rkyv.tmp");
+        gfi.save_rkyv(&rkyv_tmp)?;
+        fs::rename(rkyv_tmp, &rkyv_path)?;
+
+        Ok(())
+    }
+    
+    pub fn export_human_readable_as_history(&self) -> std::io::Result<()> {
+        let entries_vec = self.to_vec();
+        let gfi = GlobalFileInfo { entries: entries_vec.clone() };
+
+        let json_path = Path::new(&self.base_dir).join(format!("nsl_{:02}_global_info_history.json", self.target_size));
+        let txt_path = Path::new(&self.base_dir).join(format!("nsl_{:02}_global_info_history.txt", self.target_size));
+
+        // JSON export
+        let json_tmp = json_path.with_extension("json.tmp");
+        let json_text = serde_json::to_string_pretty(&gfi)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        fs::write(&json_tmp, json_text)?;
+        if json_path.exists() { let _ = fs::remove_file(&json_path); }
+        fs::rename(json_tmp, &json_path)?;
+
+        // TXT export
+        let txt_tmp = txt_path.with_extension("txt.tmp");
+        let txt_body = render_global_count(&entries_vec, self.target_size, &self.base_dir);
+        fs::write(&txt_tmp, txt_body)?;
+        if txt_path.exists() { let _ = fs::remove_file(&txt_path); }
+        fs::rename(txt_tmp, &txt_path)?;
+
+        Ok(())
     }
 
     pub fn to_vec(&self) -> Vec<FileInfo> {
