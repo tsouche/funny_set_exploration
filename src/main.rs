@@ -922,8 +922,11 @@ fn get_cascade_directories(root_directory: &str, input_size: u8) -> (String, Str
     let input_dir = if input_size == 12 {
         // Size 12 comes from 11_to_12
         Path::new(root_directory).join("11_to_12")
+    } else if input_size == 13 {
+        // Size 13 comes from 12_to_13c (12 doesn't have 'c')
+        Path::new(root_directory).join("12_to_13c")
     } else {
-        // Size 13+ comes from {size-1}c_to_{size}c
+        // Size 14+ comes from {size-1}c_to_{size}c
         Path::new(root_directory).join(format!("{}c_to_{}c", input_size - 1, input_size))
     };
     
