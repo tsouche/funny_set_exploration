@@ -1,4 +1,4 @@
-/// Manage the search for the grail of Set: combinations of 12 / 15 / 18 cards 
+/// Manage the search for the grail of Set: combinations of up to 20 cards 
 /// with no sets
 ///
 /// Version 0.4.14 - Added --save-history mode for historical state preservation
@@ -22,11 +22,11 @@
 ///   funny.exe --check 6 -o .\output                         # Check size 6 integrity
 ///   funny.exe --compact 15 -i .\14_to_15                    # Compact all size 15 files
 ///   funny.exe --compact 15 5000 -i .\14_to_15               # Compact up to batch 5000
-///   funny.exe                                               # Default mode (sizes 4-18)
+///   funny.exe                                               # Default mode (sizes 4-20)
 ///
 /// Arguments:
-///   --size, -s <SIZE> [BATCH]  Target output size (3-18), optional batch to restart from
-///                              If omitted, runs default behavior (creates seeds + sizes 4-18)
+///   --size, -s <SIZE> [BATCH]  Target output size (3-20), optional batch to restart from
+///                              If omitted, runs default behavior (creates seeds + sizes 4-20)
 ///   --unitary <SIZE> <BATCH>   Process only one specific input batch (unitary processing)
 ///   --cascade <INPUT_SIZE>     Process all sizes from INPUT_SIZE (12-19) to size 20
 ///                              Automatically detects last processed batch per size
@@ -352,7 +352,7 @@ fn build_config(args: &Args, max_per_file: u64) -> Result<ProcessingConfig, Stri
         ProcessingMode::SaveHistory { size: save_history_size }
     } else if let Some(ref compact_vec) = args.compact {
         let compact_size = compact_vec[0] as u8;
-        validate_size(compact_size, "Compact", 3, 18)?;
+        validate_size(compact_size, "Compact", 3, 20)?;
         let max_batch = if compact_vec.len() == 2 {
             Some(compact_vec[1])
         } else {
@@ -360,20 +360,20 @@ fn build_config(args: &Args, max_per_file: u64) -> Result<ProcessingConfig, Stri
         };
         ProcessingMode::Compact { size: compact_size, max_batch }
     } else if let Some(legacy_size) = args.legacy_count {
-        validate_size(legacy_size, "Legacy-count", 3, 18)?;
+        validate_size(legacy_size, "Legacy-count", 3, 20)?;
         ProcessingMode::LegacyCount { size: legacy_size }
     } else if let Some(create_json_size) = args.create_json {
-        validate_size(create_json_size, "Create-json", 3, 18)?;
+        validate_size(create_json_size, "Create-json", 3, 20)?;
         ProcessingMode::CreateJson { size: create_json_size }
     } else if let Some(check_size) = args.check {
-        validate_size(check_size, "Check", 3, 18)?;
+        validate_size(check_size, "Check", 3, 20)?;
         ProcessingMode::Check { size: check_size }
     } else if let Some(count_size) = args.count {
-        validate_size(count_size, "Count", 3, 18)?;
+        validate_size(count_size, "Count", 3, 20)?;
         ProcessingMode::Count { size: count_size }
     } else if let Some(ref size_vec) = args.size {
         let size = size_vec[0] as u8;
-        validate_size(size, "Size", 3, 18)?;
+        validate_size(size, "Size", 3, 20)?;
         let start_batch = if size_vec.len() == 2 {
             let batch = size_vec[1];
             if size == 3 && batch > 0 {
@@ -396,7 +396,7 @@ fn build_config(args: &Args, max_per_file: u64) -> Result<ProcessingConfig, Stri
         }
         let size = unitary_vec[0] as u8;
         let batch = unitary_vec[1];
-        validate_size(size, "Unitary", 3, 17)?;
+        validate_size(size, "Unitary", 3, 19)?;
         ProcessingMode::Unitary { size, batch }
     } else {
         ProcessingMode::Default
@@ -1205,7 +1205,7 @@ fn execute_cascade_mode(starting_input_size: u8, root_directory: &str, max_lists
     Ok(format!("Cascade mode completed: {} sizes processed", total_sizes_processed))
 }
 
-/// Execute default mode: process the whole pipeline (seeds + sizes 4 to 18)
+/// Execute default mode: process the whole pipeline (seeds + sizes 4 to 20)
 fn execute_default_mode(config: &ProcessingConfig) -> Result<String, String> {
     use crate::list_of_nsl::ListOfNSL;
     use crate::file_info::GlobalFileState;
@@ -1235,7 +1235,7 @@ fn execute_default_mode(config: &ProcessingConfig) -> Result<String, String> {
     no_set_lists.create_seed_lists();
 
     // Expand from seed_lists to size 4, 5, 6...
-    for size in 3..17 {
+    for size in 3..19 {
         let target_size = size + 1;
         let mut global_state = GlobalFileState::from_sources(&config.output_dir, target_size)
             .map_err(|e| format!("Failed to load global state: {}", e))?;
@@ -1250,7 +1250,7 @@ fn execute_default_mode(config: &ProcessingConfig) -> Result<String, String> {
         }
     }
     
-    Ok("Default pipeline completed (sizes 3-18)".to_string())
+    Ok("Default pipeline completed (sizes 3-20)".to_string())
 }
 
 fn main() {

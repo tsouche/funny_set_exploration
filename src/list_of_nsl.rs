@@ -133,7 +133,7 @@ impl ListOfNSL {
                     // Check if (i,j,k) forms a set
                     if !is_set(i, j, k) {
                         // Build seed list on stack
-                        let mut no_set_array = [0usize; 18];
+                        let mut no_set_array = [0usize; 20];
                         no_set_array[0] = i;
                         no_set_array[1] = j;
                         no_set_array[2] = k;

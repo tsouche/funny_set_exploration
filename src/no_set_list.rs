@@ -10,7 +10,7 @@
 /// - No heap fragmentation
 ///
 /// Maximum sizes:
-/// - no_set_list: 18 cards (maximum we search for)
+/// - no_set_list: 20 cards (maximum we search for)
 /// - remaining_cards_list: 81 cards (full deck)
 
 use crate::set::*;
@@ -32,8 +32,8 @@ pub struct NoSetList {
     pub size: u8,               // Size of the no-set-list
     pub max_card: usize,        // Maximum card index in the no-set-list
     
-    // Fixed-size array for the no-set combination (max 18 cards)
-    pub no_set_list: [usize; 18],
+    // Fixed-size array for the no-set combination (max 20 cards)
+    pub no_set_list: [usize; 20],
     pub no_set_list_len: u8,
     
     // Fixed-size array for remaining cards (max 81 cards - 3 for the seed-list)
@@ -47,7 +47,7 @@ impl NoSetList {
         Self {
             size: 0,
             max_card: 0,
-            no_set_list: [0; 18],
+            no_set_list: [0; 20],
             no_set_list_len: 0,
             remaining_cards_list: [0; 78],
             remaining_cards_list_len: 0,
@@ -57,10 +57,10 @@ impl NoSetList {
     /// Create a NoSetList from slices (for seed creation)
     /// 
     /// # Panics
-    /// Panics if no_set exceeds 18 cards or remaining exceeds 78 cards
+    /// Panics if no_set exceeds 20 cards or remaining exceeds 78 cards
     pub fn from_slices(size: u8, max_card: usize, no_set: &[usize], 
         remaining: &[usize]) -> Self {
-        assert!(no_set.len() <= 18, "no_set_list exceeds maximum size of 18");
+        assert!(no_set.len() <= 20, "no_set_list exceeds maximum size of 20");
         assert!(remaining.len() <= 78, "remaining_cards_list exceeds maximum \
             size of 78");
         
@@ -153,7 +153,7 @@ impl NoSetList {
             // ================================================================
             // STACK OPERATION 1: Copy and extend the primary list (no malloc)
             // ================================================================
-            let mut n_plus_1_primary = [0usize; 18];
+            let mut n_plus_1_primary = [0usize; 20];
             let n_plus_1_len = self.no_set_list_len + 1;
             
             // Copy existing cards
