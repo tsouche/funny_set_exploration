@@ -537,6 +537,23 @@ impl GlobalFileState {
         file_size_bytes: Option<u64>,
         modified_timestamp: Option<i64>,
     ) {
+        // Check if the same filename exists with the same target_batch but different source_batch
+        // This happens in cascade mode when a file is appended to across multiple passes
+        // In this case, the file is "renamed" (different source batch in filename) and we need
+        // to remove the old entry to avoid duplicate entries in history
+        let keys_to_remove: Vec<(u32, u32, String)> = self.entries
+            .keys()
+            .filter(|(old_src, old_tgt, old_filename)| {
+                old_filename == filename && *old_tgt == tgt_batch && *old_src != src_batch
+            })
+            .cloned()
+            .collect();
+        
+        for old_key in keys_to_remove {
+            self.entries.remove(&old_key);
+            self.removed_entries.insert(old_key);
+        }
+        
         let fi = FileInfo {
             source_batch: src_batch,
             target_batch: tgt_batch,

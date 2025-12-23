@@ -201,6 +201,11 @@ struct Args {
     #[arg(long, conflicts_with_all = ["size", "unitary", "count", "compact", "check", "cascade"], help = "Save history: merge current state with historical records for a size")]
     save_history: Option<u8>,
 
+    /// Export lists mode: export rkyv files to human-readable .txt and .json format
+    /// Reads all rkyv files from directory and exports each list in readable format.
+    #[arg(long, conflicts_with_all = ["size", "unitary", "count", "compact", "check", "cascade", "save_history", "create_json", "legacy_count"], help = "Export lists from rkyv files to human-readable .txt and .json")]
+    export_lists: Option<String>,
+
     /// Input directory path (optional)
     /// Directory to read input files from; usage varies by mode.
     #[arg(short, long, help = "Input directory path (optional)")]
@@ -239,6 +244,7 @@ enum ProcessingMode {
     Unitary { size: u8, batch: u32 },
     Cascade { starting_input_size: u8, root_directory: String },
     SaveHistory { size: u8 },
+    ExportLists { filename: String },
     Default,
 }
 
@@ -252,7 +258,8 @@ impl ProcessingMode {
             ProcessingMode::Check { .. } | 
             ProcessingMode::Compact { .. } |
             ProcessingMode::Cascade { .. } |
-            ProcessingMode::SaveHistory { .. })
+            ProcessingMode::SaveHistory { .. } |
+            ProcessingMode::ExportLists { .. })
     }
 }
 
@@ -1226,6 +1233,8 @@ fn execute_default_mode(config: &ProcessingConfig) -> Result<String, String> {
     test_print("   - will create  __.___.___.___ no-set-lists with 16 cards");
     test_print("   - will create  __.___.___.___ no-set-lists with 17 cards");
     test_print("   - will create  __.___.___.___ no-set-lists with 18 cards");
+    test_print("   - will create  __.___.___.___ no-set-lists with 19 cards");
+    test_print("   - will create  __.___.___.___ no-set-lists with 20 cards");
     test_print("\n======================\n");
 
     let mut no_set_lists = ListOfNSL::with_path(&config.input_dir);
